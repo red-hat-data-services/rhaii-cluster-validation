@@ -510,32 +510,6 @@ var gpuResourceNames = []corev1.ResourceName{
 	"amd.com/gpu",
 }
 
-// detectGPUResources scans GPU nodes and returns the GPU resource name and the
-// minimum allocatable count across all nodes.
-func (c *Controller) detectGPUResources(ctx context.Context, gpuNodes []string) (string, int64) {
-	var detectedResource string
-	var minCount int64
-
-	for _, nodeName := range gpuNodes {
-		node, err := c.client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-		if err != nil {
-			continue
-		}
-		for _, resName := range gpuResourceNames {
-			if qty, ok := node.Status.Allocatable[resName]; ok {
-				count := qty.Value()
-				if count > 0 {
-					detectedResource = string(resName)
-					if minCount == 0 || count < minCount {
-						minCount = count
-					}
-					break
-				}
-			}
-		}
-	}
-	return detectedResource, minCount
-}
 
 
 func (c *Controller) ensureNamespace(ctx context.Context) error {

@@ -34,7 +34,7 @@ func (c *StatusCheck) Run(ctx context.Context) checks.Result {
 		sysOutput, sysErr := hostExec(ctx, "ls", "/sys/class/infiniband/")
 		if sysErr != nil || strings.TrimSpace(string(sysOutput)) == "" {
 			r.Status = checks.StatusFail
-			r.Message = fmt.Sprintf("ibstat not available and no RDMA devices in sysfs")
+			r.Message = "ibstat not available and no RDMA devices in sysfs"
 			r.Remediation = "Check RDMA device plugin and network operator installation"
 			return r
 		}
