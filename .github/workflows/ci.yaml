@@ -25,9 +25,9 @@ jobs:
         run: go test ./... -count=1 -race
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: v2.2.1
 
       - name: Verify go.mod tidy
         run: |

@@ -22,7 +22,7 @@ jobs:
         run: make build
 
       - name: Verify version flag
-        run: ./bin/rhaii-validate-agent --version
+        run: ./bin/rhaii-validator --version
 
       - name: Run agent locally (expect check failures, no runtime errors)
         run: |
@@ -30,7 +30,7 @@ jobs:
           # Checks will FAIL (no GPU/RDMA on CI runner) — that's expected.
           # What we're testing: no panics, no build errors, clean JSON output.
           set +e
-          ./bin/rhaii-validate-agent run --no-wait --node-name ci-runner 2>stderr.log >stdout.log
+          ./bin/rhaii-validator run --no-wait --node-name ci-runner 2>stderr.log >stdout.log
           exit_code=$?
           set -e
 
@@ -65,12 +65,12 @@ jobs:
           "
 
       - name: Build container image
-        run: docker build -t rhaii-validate-agent:ci .
+        run: docker build -t rhaii-validator:ci .
 
       - name: Run container e2e (expect check failures, no runtime errors)
         run: |
           set +e
-          docker run --rm rhaii-validate-agent:ci run --no-wait --node-name ci-container 2>stderr.log >stdout.log
+          docker run --rm rhaii-validator:ci run --no-wait --node-name ci-container 2>stderr.log >stdout.log
           exit_code=$?
           set -e
 

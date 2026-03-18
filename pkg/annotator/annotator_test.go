@@ -16,6 +16,7 @@ func TestSetStatus(t *testing.T) {
 			Namespace: "rhaii-validation",
 		},
 	}
+	//nolint:staticcheck // NewClientset requires generated apply configs
 	client := fake.NewSimpleClientset(pod)
 	ann := NewWithClient(client, "agent-abc", "rhaii-validation")
 	ctx := context.Background()
@@ -49,7 +50,8 @@ func TestSetStatus(t *testing.T) {
 }
 
 func TestSetStatusNonExistentPod(t *testing.T) {
-	client := fake.NewSimpleClientset() // no pods
+	//nolint:staticcheck // NewClientset requires generated apply configs
+	client := fake.NewSimpleClientset()
 	ann := NewWithClient(client, "no-such-pod", "rhaii-validation")
 
 	err := ann.SetStatus(context.Background(), StatusStarting)

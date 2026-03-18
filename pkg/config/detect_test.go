@@ -10,7 +10,7 @@ import (
 )
 
 func TestDetectPlatform_AKS(t *testing.T) {
-	client := fake.NewSimpleClientset(&corev1.Node{
+	client := fake.NewSimpleClientset(&corev1.Node{ //nolint:staticcheck
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "aks-node-1",
 			Labels: map[string]string{"kubernetes.azure.com/cluster": "my-cluster"},
@@ -27,7 +27,7 @@ func TestDetectPlatform_AKS(t *testing.T) {
 }
 
 func TestDetectPlatform_AKS_ByProviderID(t *testing.T) {
-	client := fake.NewSimpleClientset(&corev1.Node{
+	client := fake.NewSimpleClientset(&corev1.Node{ //nolint:staticcheck
 		ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
 		Spec:       corev1.NodeSpec{ProviderID: "azure:///subscriptions/xxx"},
 	})
@@ -39,7 +39,7 @@ func TestDetectPlatform_AKS_ByProviderID(t *testing.T) {
 }
 
 func TestDetectPlatform_EKS(t *testing.T) {
-	client := fake.NewSimpleClientset(&corev1.Node{
+	client := fake.NewSimpleClientset(&corev1.Node{ //nolint:staticcheck
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "eks-node-1",
 			Labels: map[string]string{"eks.amazonaws.com/nodegroup": "my-nodegroup"},
@@ -54,7 +54,7 @@ func TestDetectPlatform_EKS(t *testing.T) {
 }
 
 func TestDetectPlatform_CoreWeave(t *testing.T) {
-	client := fake.NewSimpleClientset(&corev1.Node{
+	client := fake.NewSimpleClientset(&corev1.Node{ //nolint:staticcheck
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "cw-node-1",
 			Labels: map[string]string{"coreweave.cloud/instance-type": "h100-80gb"},
@@ -68,7 +68,7 @@ func TestDetectPlatform_CoreWeave(t *testing.T) {
 }
 
 func TestDetectPlatform_OCP(t *testing.T) {
-	client := fake.NewSimpleClientset(&corev1.Node{
+	client := fake.NewSimpleClientset(&corev1.Node{ //nolint:staticcheck
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "ocp-node-1",
 			Labels: map[string]string{"node.openshift.io/os_id": "rhcos"},
@@ -82,7 +82,7 @@ func TestDetectPlatform_OCP(t *testing.T) {
 }
 
 func TestDetectPlatform_Unknown(t *testing.T) {
-	client := fake.NewSimpleClientset(&corev1.Node{
+	client := fake.NewSimpleClientset(&corev1.Node{ //nolint:staticcheck
 		ObjectMeta: metav1.ObjectMeta{Name: "generic-node"},
 	})
 
@@ -93,6 +93,7 @@ func TestDetectPlatform_Unknown(t *testing.T) {
 }
 
 func TestDetectPlatform_NoNodes(t *testing.T) {
+	//nolint:staticcheck
 	client := fake.NewSimpleClientset()
 
 	platform := DetectPlatform(context.Background(), client)
