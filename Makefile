@@ -18,13 +18,16 @@ CONTAINER_RUNTIME ?= $(shell \
 		echo "echo 'Error: no container runtime found. Install podman or docker.' && exit 1"; \
 	fi)
 
+# Target platform for container images
+TARGET_PLATFORM ?= linux/amd64
+
 help:
 	@echo "rhaii-cluster-validation - GPU/RDMA validation agent"
 	@echo ""
 	@echo "Build:"
 	@echo "  make build          - Build agent binary"
 	@echo "  make test           - Run unit tests"
-	@echo "  make container      - Build container image"
+	@echo "  make container      - Build container image (linux/amd64)"
 	@echo "  make push           - Push container image"
 	@echo "  make install        - Install as kubectl plugin (kubectl rhaii-validate)"
 	@echo "  make uninstall      - Remove kubectl plugin"
@@ -62,7 +65,7 @@ RDMA_BUILDER_IMAGE ?= nvcr.io/nvidia/cuda:13.0.0-devel-ubi9
 RDMA_RUNTIME_IMAGE ?= nvcr.io/nvidia/cuda:13.0.0-runtime-ubi9
 
 container:
-	$(CONTAINER_RUNTIME) build --build-arg VERSION=$(VERSION) -t $(IMG) .
+	$(CONTAINER_RUNTIME) build --platform $(TARGET_PLATFORM) --build-arg VERSION=$(VERSION) -t $(IMG) .
 
 container-rdma:
 	$(CONTAINER_RUNTIME) build -f Dockerfile.rdma-tools \
