@@ -60,10 +60,12 @@ type Controller struct {
 	cfg          config.PlatformConfig
 	output       io.Writer
 	platform     config.Platform
-	gpuVendor    config.GPUVendor // auto-detected from node labels
-	gpuNodeLabel string           // label used to discover GPU nodes (empty = fallback to resources)
-	gpuNodes     []string         // discovered GPU node names
-	jobs         []jobrunner.Job
+	gpuVendor       config.GPUVendor    // auto-detected from node labels
+	gpuNodeLabel    string              // label used to discover GPU nodes (empty = fallback to resources)
+	gpuNodes        []string            // discovered GPU node names
+	gpuResourceName corev1.ResourceName // detected GPU resource (e.g., "nvidia.com/gpu")
+	gpuCountPerNode map[string]int64    // GPU count per node from allocatable
+	jobs            []jobrunner.Job
 }
 
 // AddJob registers a multi-node job to run when --bandwidth is enabled.
@@ -325,6 +327,11 @@ func (c *Controller) Run(ctx context.Context) error {
 		return nil
 	}
 	fmt.Fprintf(c.output, "  Found %d GPU node(s): %s\n", len(gpuNodes), strings.Join(gpuNodes, ", "))
+	for _, name := range gpuNodes {
+		if count, ok := c.gpuCountPerNode[name]; ok {
+			fmt.Fprintf(c.output, "    %s: %d GPU(s) [%s]\n", name, count, c.gpuResourceName)
+		}
+	}
 
 	// Step 6: Deploy agent DaemonSet
 	fmt.Fprintln(c.output, "[Step 6] Deploying agent DaemonSet...")
@@ -378,6 +385,10 @@ func (c *Controller) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to collect reports — pods kept alive for debugging")
 		}
 		return fmt.Errorf("failed to collect any reports from %d GPU node(s)", len(gpuNodes))
+	}
+	if len(reports) > 0 && len(reports) < len(gpuNodes) {
+		return fmt.Errorf("partial results: collected %d/%d nodes (some nodes may lack free GPU resources)",
+			len(reports), len(gpuNodes))
 	}
 	if hasFailures {
 		return fmt.Errorf("validation failed: one or more checks reported FAIL")
@@ -456,8 +467,9 @@ var gpuNodeSelectors = []struct {
 }
 
 func (c *Controller) discoverGPUNodes(ctx context.Context) ([]string, error) {
+	c.gpuCountPerNode = make(map[string]int64)
+
 	// Try each vendor's node selector until we find GPU nodes
-	// Try label-based discovery first
 	for _, gs := range gpuNodeSelectors {
 		nodes, err := c.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 			LabelSelector: gs.selector,
@@ -471,6 +483,7 @@ func (c *Controller) discoverGPUNodes(ctx context.Context) ([]string, error) {
 			var names []string
 			for _, node := range nodes.Items {
 				names = append(names, node.Name)
+				c.recordGPUCount(&node)
 			}
 			fmt.Fprintf(c.output, "  GPU vendor: %s (auto-detected from node labels)\n", gs.vendor)
 			return names, nil
@@ -487,6 +500,10 @@ func (c *Controller) discoverGPUNodes(ctx context.Context) ([]string, error) {
 		for _, resName := range gpuResourceNames {
 			if qty, ok := node.Status.Allocatable[resName]; ok && qty.Value() > 0 {
 				names = append(names, node.Name)
+				c.gpuCountPerNode[node.Name] = qty.Value()
+				if c.gpuResourceName == "" {
+					c.gpuResourceName = resName
+				}
 				if c.gpuVendor == "" {
 					if strings.Contains(string(resName), "nvidia") {
 						c.gpuVendor = config.GPUVendorNVIDIA
@@ -502,6 +519,20 @@ func (c *Controller) discoverGPUNodes(ctx context.Context) ([]string, error) {
 		fmt.Fprintf(c.output, "  GPU vendor: %s (auto-detected from node resources)\n", c.gpuVendor)
 	}
 	return names, nil
+}
+
+// recordGPUCount reads GPU count from a node's allocatable resources and
+// stores it in gpuCountPerNode. Also sets gpuResourceName on first discovery.
+func (c *Controller) recordGPUCount(node *corev1.Node) {
+	for _, resName := range gpuResourceNames {
+		if qty, ok := node.Status.Allocatable[resName]; ok && qty.Value() > 0 {
+			c.gpuCountPerNode[node.Name] = qty.Value()
+			if c.gpuResourceName == "" {
+				c.gpuResourceName = resName
+			}
+			return
+		}
+	}
 }
 
 // gpuResourceNames are the known extended resource names for GPUs across vendors.
@@ -640,6 +671,33 @@ func (c *Controller) deployAgent(ctx context.Context) error {
 		ds.Spec.Template.Spec.Containers[0].Resources = reqs
 	}
 
+	// Request GPU resources so the device plugin injects nvidia-smi / rocm-smi
+	if c.gpuResourceName != "" && len(c.gpuCountPerNode) > 0 {
+		var minCount, maxCount int64
+		for _, count := range c.gpuCountPerNode {
+			if minCount == 0 || count < minCount {
+				minCount = count
+			}
+			if count > maxCount {
+				maxCount = count
+			}
+		}
+		if minCount != maxCount {
+			fmt.Fprintf(c.output, "  Warning: heterogeneous GPU counts detected (min=%d, max=%d); requesting %d per pod\n", minCount, maxCount, minCount)
+		}
+		gpuQty := resource.MustParse(fmt.Sprintf("%d", minCount))
+		container := &ds.Spec.Template.Spec.Containers[0]
+		if container.Resources.Requests == nil {
+			container.Resources.Requests = make(corev1.ResourceList)
+		}
+		if container.Resources.Limits == nil {
+			container.Resources.Limits = make(corev1.ResourceList)
+		}
+		container.Resources.Requests[c.gpuResourceName] = gpuQty
+		container.Resources.Limits[c.gpuResourceName] = gpuQty
+		fmt.Fprintf(c.output, "  Requesting %d %s per node (released after checks complete)\n", minCount, c.gpuResourceName)
+	}
+
 	// Pass auto-detected vendor so agent knows which checks to run
 	if c.gpuVendor != "" {
 		container := &ds.Spec.Template.Spec.Containers[0]
@@ -696,9 +754,10 @@ func (c *Controller) waitAndCollect(ctx context.Context, gpuNodes []string) ([]c
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return c.collectAvailable(ctx, selector, gpuNodes, ctx.Err())
 		case <-timeout:
-			return nil, fmt.Errorf("timed out waiting for agents after %v", c.opts.Timeout)
+			return c.collectAvailable(ctx, selector, gpuNodes,
+				fmt.Errorf("timed out waiting for agents after %v", c.opts.Timeout))
 		case <-ticker.C:
 			pods, err := c.client.CoreV1().Pods(c.opts.Namespace).List(ctx, metav1.ListOptions{
 				LabelSelector: selector,
@@ -707,7 +766,6 @@ func (c *Controller) waitAndCollect(ctx context.Context, gpuNodes []string) ([]c
 				continue
 			}
 
-			// Check annotation set by the agent when it finishes.
 			ready := 0
 			for _, pod := range pods.Items {
 				status := pod.Annotations[annotationKey]
@@ -723,6 +781,62 @@ func (c *Controller) waitAndCollect(ctx context.Context, gpuNodes []string) ([]c
 			}
 		}
 	}
+}
+
+// collectAvailable gathers results from whatever pods completed before the
+// timeout. It reports which nodes are missing and returns partial results
+// alongside the original error so the caller can still produce a report.
+func (c *Controller) collectAvailable(ctx context.Context, selector string, gpuNodes []string, origErr error) ([]checks.NodeReport, error) {
+	listCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	pods, err := c.client.CoreV1().Pods(c.opts.Namespace).List(listCtx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return nil, origErr
+	}
+
+	var readyPods []corev1.Pod
+	for _, pod := range pods.Items {
+		status := pod.Annotations[annotationKey]
+		if status == annotationDone || status == annotationError {
+			readyPods = append(readyPods, pod)
+		}
+	}
+
+	reports, _ := c.collectResults(listCtx, readyPods)
+
+	// Identify which nodes we got results for vs which are missing
+	collected := make(map[string]bool)
+	for _, r := range reports {
+		collected[r.Node] = true
+	}
+	var missing []string
+	for _, node := range gpuNodes {
+		if !collected[node] {
+			missing = append(missing, node)
+		}
+	}
+
+	if len(missing) > 0 {
+		fmt.Fprintf(c.output, "  Collected %d/%d node(s); missing: %s\n",
+			len(reports), len(gpuNodes), strings.Join(missing, ", "))
+
+		// Check for scheduling failures on missing nodes
+		for _, pod := range pods.Items {
+			if collected[pod.Spec.NodeName] {
+				continue
+			}
+			for _, cond := range pod.Status.Conditions {
+				if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+					fmt.Fprintf(c.output, "  Pod %s not scheduled: %s\n", pod.Name, cond.Message)
+				}
+			}
+		}
+	}
+
+	return reports, origErr
 }
 
 func (c *Controller) collectResults(ctx context.Context, pods []corev1.Pod) ([]checks.NodeReport, error) {
