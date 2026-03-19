@@ -103,13 +103,12 @@ func parseDriverOutput(output string) (*driverInfo, error) {
 	}, nil
 }
 
-// hostExec runs a command on the host filesystem.
-// The DaemonSet mounts the host root at /host. We use chroot to run
-// commands with the host's binaries and libraries (nvidia-smi, ibstat, etc.).
+// hostExec runs a command directly inside the container. GPU tools like
+// nvidia-smi are expected to be injected by the device plugin when the pod
+// requests GPU resources — if they're missing, it indicates the GPU Operator
+// is not functioning correctly.
 func hostExec(ctx context.Context, name string, args ...string) ([]byte, error) {
-	chrootArgs := []string{"/host", name}
-	chrootArgs = append(chrootArgs, args...)
-	return exec.CommandContext(ctx, "chroot", chrootArgs...).Output()
+	return exec.CommandContext(ctx, name, args...).Output()
 }
 
 // compareVersions compares two dot-separated version strings numerically.
