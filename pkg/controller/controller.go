@@ -493,18 +493,17 @@ func (c *Controller) Run(ctx context.Context) error {
 	// Step 8: Run multi-node bandwidth jobs (using topology from networking reports)
 	var jobResults []jobrunner.JobResult
 	needBandwidth := c.opts.CheckMode == "networking" || c.opts.CheckMode == "net-bandwidth" || c.opts.CheckMode == "all"
-	if needBandwidth && len(c.jobs) > 0 && len(gpuNodes) >= 2 {
+	shouldRunBandwidth := needBandwidth && len(c.jobs) > 0 && len(gpuNodes) >= 2
+	if shouldRunBandwidth {
 		// If net checks didn't run this session, load topology from stored report
 		if len(netReports) == 0 {
-			storedTopo, topoErr := c.loadTopologyFromReport(ctx)
+			stored, topoErr := c.loadTopologyFromReport(ctx, gpuNodes)
 			if topoErr != nil {
 				fmt.Fprintf(c.output, "  Warning: %v\n", topoErr)
 				fmt.Fprintln(c.output, "  Hint: run 'kubectl rhaii-validate net-checks' first to generate topology")
 			} else {
-				for node, topo := range storedTopo {
-					netReports = append(netReports, checks.NodeReport{Node: node, Topology: topo})
-				}
-				fmt.Fprintf(c.output, "  Loaded topology for %d node(s) from stored report\n", len(storedTopo))
+				netReports = stored
+				fmt.Fprintf(c.output, "  Loaded topology for %d node(s) from stored report\n", len(stored))
 			}
 		}
 
@@ -602,10 +601,13 @@ func (c *Controller) detectAndCreateConfig(ctx context.Context) error {
 	if err == nil {
 		// ConfigMap exists — merge user's overrides on top of detected defaults
 		if existingYAML, ok := existing.Data["platform.yaml"]; ok {
-			// Unmarshal user config on top of detected defaults (only set fields are overridden)
 			if yamlErr := yaml.Unmarshal([]byte(existingYAML), &cfg); yamlErr != nil {
-				fmt.Fprintf(c.output, "  Warning: failed to parse existing ConfigMap YAML: %v\n", yamlErr)
+				return fmt.Errorf("failed to parse existing ConfigMap %s/%s platform.yaml: %w",
+					c.opts.Namespace, configMapName, yamlErr)
 			}
+		}
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("existing ConfigMap has invalid config: %w", err)
 		}
 		c.cfg = cfg
 		fmt.Fprintf(c.output, "  ConfigMap %s/%s already exists, using existing config (platform: %s)\n",
@@ -993,6 +995,7 @@ func (c *Controller) deployNetCheckJobs(ctx context.Context) error {
 		container.Env = append(container.Env,
 			corev1.EnvVar{Name: "GPU_VENDOR", Value: string(c.gpuVendor)},
 			corev1.EnvVar{Name: "CHECK_MODE", Value: "networking"},
+			corev1.EnvVar{Name: "RDMA_TYPE", Value: c.cfg.Jobs.RDMAType},
 		)
 
 		_, err := c.client.BatchV1().Jobs(c.opts.Namespace).Create(ctx, job, metav1.CreateOptions{})
@@ -1253,7 +1256,7 @@ func (c *Controller) runBandwidthJobs(ctx context.Context, gpuNodes []string, re
 
 // mergeNodeReports combines reports from multiple phases (e.g. GPU checks and
 // networking checks) into a single slice. Reports for the same node are merged
-// by appending results and taking whichever topology is non-nil.
+// by appending results.
 func mergeNodeReports(reportSets ...[]checks.NodeReport) []checks.NodeReport {
 	byNode := make(map[string]*checks.NodeReport)
 	var order []string
@@ -1267,9 +1270,6 @@ func mergeNodeReports(reportSets ...[]checks.NodeReport) []checks.NodeReport {
 				order = append(order, r.Node)
 			} else {
 				existing.Results = append(existing.Results, r.Results...)
-				if r.Topology != nil {
-					existing.Topology = r.Topology
-				}
 			}
 		}
 	}
@@ -1285,16 +1285,17 @@ func mergeNodeReports(reportSets ...[]checks.NodeReport) []checks.NodeReport {
 func buildTopologyMap(reports []checks.NodeReport) map[string]*checks.NodeTopology {
 	m := make(map[string]*checks.NodeTopology)
 	for _, r := range reports {
-		if r.Topology != nil && len(r.Topology.Pairs) > 0 {
-			m[r.Node] = r.Topology
+		if topo := checks.ExtractTopology(r); topo != nil {
+			m[r.Node] = topo
 		}
 	}
 	return m
 }
 
-// loadTopologyFromReport reads topology from the stored report ConfigMap.
-// Used by net-bandwidth mode to get topology without re-running net checks.
-func (c *Controller) loadTopologyFromReport(ctx context.Context) (map[string]*checks.NodeTopology, error) {
+// loadTopologyFromReport reads topology-bearing NodeReports from the stored
+// report ConfigMap. Only nodes present in gpuNodes are returned, preserving
+// original Result status/details so WARN/FAIL aren't overwritten with PASS.
+func (c *Controller) loadTopologyFromReport(ctx context.Context, gpuNodes []string) ([]checks.NodeReport, error) {
 	cm, err := c.client.CoreV1().ConfigMaps(c.opts.Namespace).Get(ctx, reportCMName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("no stored report found (ConfigMap %s/%s): %w", c.opts.Namespace, reportCMName, err)
@@ -1312,12 +1313,25 @@ func (c *Controller) loadTopologyFromReport(ctx context.Context) (map[string]*ch
 		return nil, fmt.Errorf("failed to parse stored report: %w", err)
 	}
 
-	topoMap := buildTopologyMap(stored.Nodes)
-	if len(topoMap) == 0 {
-		return nil, fmt.Errorf("stored report has no topology data")
+	nodeSet := make(map[string]bool, len(gpuNodes))
+	for _, n := range gpuNodes {
+		nodeSet[n] = true
 	}
 
-	return topoMap, nil
+	var reports []checks.NodeReport
+	for _, r := range stored.Nodes {
+		if !nodeSet[r.Node] {
+			continue
+		}
+		if checks.ExtractTopology(r) != nil {
+			reports = append(reports, r)
+		}
+	}
+	if len(reports) == 0 {
+		return nil, fmt.Errorf("stored report has no topology data for current GPU nodes")
+	}
+
+	return reports, nil
 }
 
 // expandRDMAJobs creates per-GPU-NIC RDMA jobs from topology.
@@ -1384,10 +1398,22 @@ func (c *Controller) expandRDMAJobs(ctx context.Context, gpuNodes []string, topo
 		}
 		hasAllDevices := rdmaCount >= len(topo.Pairs)
 
+		// GPUDirect RDMA: request all GPUs so the NVIDIA container runtime
+		// injects CUDA libraries and --use_cuda sees correct GPU indices
+		gpuResourcesAvailable := hasAllDevices && c.gpuResource != "" && topo.GPUCount > 0 && origPodCfg != nil
+		if gpuResourcesAvailable {
+			gpuCountStr := fmt.Sprintf("%d", topo.GPUCount)
+			origPodCfg.ResourceRequests[string(c.gpuResource)] = gpuCountStr
+			origPodCfg.ResourceLimits[string(c.gpuResource)] = gpuCountStr
+		}
+
 		// Collect devices and GPU IDs for WEP
 		var devices []string
 		var gpuIDs []int
 		uniqueDevices := make(map[string]bool)
+
+		cfgQPs := c.cfg.Jobs.RDMA.QPs
+		cfgMsgSize := c.cfg.Jobs.RDMA.MessageSize
 
 		if hasAllDevices {
 			// Requesting all RDMA devices — create one PD job per GPU-NIC pair
@@ -1396,15 +1422,21 @@ func (c *Controller) expandRDMAJobs(ctx context.Context, gpuNodes []string, topo
 				rdmaJob.PodCfg = origPodCfg
 				rdmaJob.ServerImage = origServerImg
 				rdmaJob.ClientImage = origClientImg
-				rdmaJob.Device = pair.NICDev
-				rdmaJob.UseCUDA = pair.GPUID
+				rdmaJob.Device = pair.NIC.Dev
+				rdmaJob.UseCUDA = pair.GPU.ID
+				if cfgQPs > 0 {
+					rdmaJob.QPs = cfgQPs
+				}
+				if cfgMsgSize > 0 {
+					rdmaJob.MessageSize = cfgMsgSize
+				}
 				jobs = append(jobs, rdmaJob)
-				fmt.Fprintf(c.output, "  RDMA PD job: GPU%d ↔ %s (NUMA%d)\n", pair.GPUID, pair.NICDev, pair.NUMAID)
+				fmt.Fprintf(c.output, "  RDMA PD job: GPU%d ↔ %s (NUMA:%d↔%d)\n", pair.GPU.ID, pair.NIC.Dev, pair.GPU.NUMA, pair.NIC.NUMA)
 
-				if !uniqueDevices[pair.NICDev] {
-					devices = append(devices, pair.NICDev)
-					gpuIDs = append(gpuIDs, pair.GPUID)
-					uniqueDevices[pair.NICDev] = true
+				if !uniqueDevices[pair.NIC.Dev] {
+					devices = append(devices, pair.NIC.Dev)
+					gpuIDs = append(gpuIDs, pair.GPU.ID)
+					uniqueDevices[pair.NIC.Dev] = true
 				}
 			}
 		} else {
@@ -1413,6 +1445,12 @@ func (c *Controller) expandRDMAJobs(ctx context.Context, gpuNodes []string, topo
 			rdmaJob.PodCfg = origPodCfg
 			rdmaJob.ServerImage = origServerImg
 			rdmaJob.ClientImage = origClientImg
+			if cfgQPs > 0 {
+				rdmaJob.QPs = cfgQPs
+			}
+			if cfgMsgSize > 0 {
+				rdmaJob.MessageSize = cfgMsgSize
+			}
 			// No Device or UseCUDA set — ib_write_bw auto-detects
 			jobs = append(jobs, rdmaJob)
 			fmt.Fprintf(c.output, "  RDMA PD job: auto-detect device (requesting %d RDMA resource)\n", rdmaCount)
@@ -1424,6 +1462,12 @@ func (c *Controller) expandRDMAJobs(ctx context.Context, gpuNodes []string, topo
 			wepJob.PodCfg = origPodCfg
 			wepJob.ServerImage = origServerImg
 			wepJob.ClientImage = origClientImg
+			if cfgQPs > 0 {
+				wepJob.QPs = cfgQPs
+			}
+			if cfgMsgSize > 0 {
+				wepJob.MessageSize = cfgMsgSize
+			}
 			jobs = append(jobs, wepJob)
 			fmt.Fprintf(c.output, "  RDMA WEP job: %d NICs in parallel (%s)\n", len(devices), strings.Join(devices, ", "))
 		} else {
@@ -1652,15 +1696,15 @@ func (c *Controller) printReport(reports []checks.NodeReport, jobResults []jobru
 	// Print topology if available
 	hasTopology := false
 	for _, report := range reports {
-		if report.Topology != nil && len(report.Topology.Pairs) > 0 {
+		if topo := checks.ExtractTopology(report); topo != nil && len(topo.Pairs) > 0 {
 			if !hasTopology {
 				fmt.Fprintln(c.output)
 				fmt.Fprintln(c.output, "GPU-NIC Topology:")
 				hasTopology = true
 			}
 			var pairDescs []string
-			for _, p := range report.Topology.Pairs {
-				pairDescs = append(pairDescs, fmt.Sprintf("GPU%d↔%s(NUMA%d)", p.GPUID, p.NICDev, p.NUMAID))
+			for _, p := range topo.Pairs {
+				pairDescs = append(pairDescs, fmt.Sprintf("GPU%d↔%s(NUMA:%d↔%d)", p.GPU.ID, p.NIC.Dev, p.GPU.NUMA, p.NIC.NUMA))
 			}
 			fmt.Fprintf(c.output, "  %s: %s\n", report.Node, strings.Join(pairDescs, ", "))
 		}
