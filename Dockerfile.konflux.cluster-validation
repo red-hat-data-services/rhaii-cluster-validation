@@ -1,0 +1,43 @@
+# Build stage
+#FROM registry.access.redhat.com/ubi9/go-toolset:1.25 AS builder
+FROM registry.redhat.io/rhel9/go-toolset@sha256:8c5aeac74b4b60dc2e5e44f6b639186b7ec2fec8f0eb9a36d4a32dcf8e255f52
+
+WORKDIR /opt/app-root/src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags "-X main.version=${VERSION}" -o /opt/app-root/rhaii-validator ./cmd/agent/
+
+# Runtime stage
+FROM registry.redhat.io/ubi9/ubi@sha256:039095faabf1edde946ff528b3b6906efa046ee129f3e33fd933280bb6936221
+
+LABEL name="rhaii-validator" \
+      vendor="Red Hat" \
+      summary="RHAII Cluster Validation Agent" \
+      description="Per-node hardware validation agent for GPU, RDMA, and network checks"
+
+# Install tools needed by the agent
+RUN dnf install -y \
+      util-linux \
+      pciutils \
+      && dnf clean all
+
+COPY --from=builder /opt/app-root/rhaii-validator /usr/local/bin/rhaii-validator
+
+# GPU/RDMA tools (nvidia-smi, ibstat, ibv_devices) run on the host via nsenter.
+# No need to install them in the container - privileged pod + nsenter handles it.
+
+USER 0
+
+ENTRYPOINT ["rhaii-validator"]
+
+LABEL name="rhoai/odh-rhaii-cluster-validator-rhel9" \
+      com.redhat.component="odh-rhaii-cluster-validator-rhel9" \
+      summary="GPU cluster validator" \
+      description="GPU cluster validator - runs GPU/RDMA hardware checks on nodes via privileged DaemonSet/jobs" \
+      maintainer="Red Hat LLM-D Team" \
+      io.k8s.display-name="RHAII Cluster validartor" \
+      io.k8s.description="GPU cluster validator - runs GPU/RDMA hardware checks on nodes via privileged DaemonSet/jobs"
