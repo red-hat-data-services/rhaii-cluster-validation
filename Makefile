@@ -1,6 +1,6 @@
 .PHONY: build test container container-rdma push push-rdma download install uninstall deploy deploy-all logs clean clean-all run-local fmt lint help
 
-IMG ?= ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-cluster-validator:latest
+IMG ?= quay.io/opendatahub/odh-rhaii-cluster-validator:latest
 export IMG
 NAMESPACE ?= rhaii-validation
 VERSION ?= $(shell git describe --tags --always --dirty)
@@ -94,7 +94,7 @@ uninstall:
 test:
 	go test ./... -v
 
-IMG_TOOLS ?= ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-validator-tools:latest
+IMG_TOOLS ?= quay.io/opendatahub/odh-rhaii-validator-tools:latest
 RDMA_BUILDER_IMAGE ?= nvcr.io/nvidia/cuda:13.0.0-devel-ubi9
 RDMA_RUNTIME_IMAGE ?= registry.redhat.io/ubi9/ubi:latest
 container:

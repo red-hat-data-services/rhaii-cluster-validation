@@ -22,7 +22,7 @@ Runs preflight checks on GPU clusters before deploying inference workloads. Vali
 make download
 
 # Or manually:
-docker run --rm --entrypoint cat ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-cluster-validator:latest \
+docker run --rm --entrypoint cat quay.io/opendatahub/odh-rhaii-cluster-validator:latest \
   /usr/local/bin/rhaii-validator > kubectl-rhaii_validate
 chmod +x kubectl-rhaii_validate
 sudo mv kubectl-rhaii_validate /usr/local/bin/
@@ -42,7 +42,7 @@ kubectl rhaii-validate clean            # Cleanup
 ### Option 2: Container Image (No Install)
 
 ```bash
-IMG=ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-cluster-validator:latest
+IMG=quay.io/opendatahub/odh-rhaii-cluster-validator:latest
 
 podman run --rm -it \
   -v ~/.kube/config:/kubeconfig:z \
@@ -74,7 +74,7 @@ make container-rdma     # Build tools container image
 make run-local          # Run checks locally (requires GPU node)
 ```
 
-Container images are automatically built and pushed to GHCR on merge to `main`.
+Container images are automatically built and pushed to `quay.io/opendatahub` via Tekton on merge to `main`.
 
 ## How Each Check Works
 
@@ -201,7 +201,7 @@ PASS: `TCP bandwidth: 94.5 Gbps (threshold: 25 Gbps)`
 WARN: `TCP bandwidth: 15.0 Gbps (below 25 Gbps threshold)`
 FAIL: `TCP bandwidth: 7.6 Gbps (well below 25 Gbps threshold)`
 
-Image: `ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-validator-tools:latest` (from `manifests/image-references/jobs.yaml`)
+Image: `quay.io/opendatahub/odh-rhaii-validator-tools:latest` (from `manifests/image-references/jobs.yaml`)
 
 ### RDMA Bandwidth (ib_write_bw)
 
@@ -229,7 +229,7 @@ Compares against `thresholds.rdma_bandwidth_pd_gbps` from platform config.
 PASS: `RDMA bandwidth: 195.2 Gbps (threshold: 180 Gbps)`
 FAIL: `RDMA bandwidth: 50.1 Gbps (well below 180 Gbps threshold)`
 
-Image: `ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-validator-tools:latest` (from `manifests/image-references/jobs.yaml`)
+Image: `quay.io/opendatahub/odh-rhaii-validator-tools:latest` (from `manifests/image-references/jobs.yaml`)
 
 ## Ring Topology
 
@@ -291,7 +291,7 @@ Report:
 | Requirement | Why |
 |-------------|-----|
 | 2+ GPU nodes | Ring topology needs at least 2 nodes |
-| Job container image pullable | `ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-validator-tools:latest` by default |
+| Job container image pullable | `quay.io/opendatahub/odh-rhaii-validator-tools:latest` by default |
 
 ### Required for RDMA Tests
 
