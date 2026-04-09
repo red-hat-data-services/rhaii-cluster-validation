@@ -20,7 +20,7 @@ import (
 
 var (
 	version      = "dev"
-	defaultImage = "ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-cluster-validator:latest"
+	defaultImage = "quay.io/opendatahub/odh-rhaii-cluster-validator:latest"
 )
 
 func main() {
