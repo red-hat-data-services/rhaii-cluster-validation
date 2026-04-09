@@ -12,16 +12,6 @@ ARG DEFAULT_IMAGE=quay.io/opendatahub/odh-rhaii-cluster-validator:latest
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags "-X main.version=${VERSION} -X main.defaultImage=${DEFAULT_IMAGE}" -o /opt/app-root/rhaii-validator ./cmd/agent/
 
 # Runtime stage
-FROM registry.access.redhat.com/ubi9/ubi@sha256:1fc04e873cb3f3c8d1211729a794716e50826f650ea88b97a4ff57f601db77a8
-
-LABEL name="rhoai/odh-rhaii-cluster-validator-rhel9" \
-      com.redhat.component="odh-rhaii-cluster-validator-rhel9" \
-      summary="RHAII Cluster Validator" \
-      description="Preflight validation probe for xKS clusters - verifies GPU availability, RDMA connectivity, network bandwidth, required CRDs, and inference readiness before AI workload deployment" \
-      maintainer="Red Hat LLM-D Team" \
-      io.k8s.display-name="RHAII Cluster Validator" \
-      io.k8s.description="Preflight validation probe for xKS clusters - verifies GPU availability, RDMA connectivity, network bandwidth, required CRDs, and inference readiness before AI workload deployment"
-
 # Install tools needed by the agent
 RUN dnf install -y \
       util-linux \
@@ -40,8 +30,8 @@ ENTRYPOINT ["rhaii-validator"]
 
 LABEL name="rhoai/odh-rhaii-cluster-validator-rhel9" \
       com.redhat.component="odh-rhaii-cluster-validator-rhel9" \
-      summary="GPU cluster validator" \
-      description="GPU cluster validator - runs GPU/RDMA hardware checks on nodes via privileged DaemonSet/jobs" \
+      summary="RHAII Cluster Validator" \
+      description="Preflight validation probe for xKS clusters - verifies GPU availability, RDMA connectivity, network bandwidth, required CRDs, and inference readiness before AI workload deployment" \
       maintainer="Red Hat LLM-D Team" \
-      io.k8s.display-name="RHAII Cluster validartor" \
-      io.k8s.description="GPU cluster validator - runs GPU/RDMA hardware checks on nodes via privileged DaemonSet/jobs"
+      io.k8s.display-name="RHAII Cluster Validator" \
+      io.k8s.description="Preflight validation probe for xKS clusters - verifies GPU availability, RDMA connectivity, network bandwidth, required CRDs, and inference readiness before AI workload deployment"
