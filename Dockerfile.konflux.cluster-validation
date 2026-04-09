@@ -12,6 +12,7 @@ ARG DEFAULT_IMAGE=quay.io/opendatahub/odh-rhaii-cluster-validator:latest
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags "-X main.version=${VERSION} -X main.defaultImage=${DEFAULT_IMAGE}" -o /opt/app-root/rhaii-validator ./cmd/agent/
 
 # Runtime stage
+FROM registry.access.redhat.com/ubi9/ubi@sha256:1fc04e873cb3f3c8d1211729a794716e50826f650ea88b97a4ff57f601db77a8
 # Install tools needed by the agent
 RUN dnf install -y \
       util-linux \
