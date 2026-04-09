@@ -98,7 +98,7 @@ IMG_TOOLS ?= quay.io/opendatahub/odh-rhaii-validator-tools:latest
 RDMA_BUILDER_IMAGE ?= nvcr.io/nvidia/cuda:13.0.0-devel-ubi9
 RDMA_RUNTIME_IMAGE ?= registry.redhat.io/ubi9/ubi:latest
 container:
-	$(CONTAINER_RUNTIME) build -f Dockerfile.dev --platform $(TARGET_PLATFORM) --build-arg VERSION=$(VERSION) --build-arg DEFAULT_IMAGE=$(IMG) -t $(IMG) .
+	$(CONTAINER_RUNTIME) build -f Dockerfile.dev --platform $(TARGET_PLATFORM) --build-arg VERSION=$(VERSION) --build-arg DEFAULT_IMAGE=$(IMG) --build-arg DEFAULT_TOOLS_IMAGE=$(IMG_TOOLS) -t $(IMG) .
 
 container-rdma:
 	$(CONTAINER_RUNTIME) build -f tools/Dockerfile.dev \
