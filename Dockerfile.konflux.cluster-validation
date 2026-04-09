@@ -1,6 +1,5 @@
 # Build stage
-#FROM registry.access.redhat.com/ubi9/go-toolset:1.25 AS builder
-FROM registry.redhat.io/rhel9/go-toolset@sha256:8c5aeac74b4b60dc2e5e44f6b639186b7ec2fec8f0eb9a36d4a32dcf8e255f52
+FROM registry.access.redhat.com/ubi9/go-toolset@sha256:22c5f0e0dfa133c7bd9d004ce2fbb01075ec88001bc7404bb4fe72ea4037bde1 AS builder
 
 WORKDIR /opt/app-root/src
 
@@ -9,27 +8,32 @@ RUN go mod download
 
 COPY . .
 ARG VERSION=dev
+ARG DEFAULT_IMAGE=quay.io/opendatahub/odh-rhaii-cluster-validator:latest
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags "-X main.version=${VERSION} -X main.defaultImage=${DEFAULT_IMAGE}" -o /opt/app-root/rhaii-validator ./cmd/agent/
 
 # Runtime stage
-FROM registry.redhat.io/ubi9/ubi@sha256:039095faabf1edde946ff528b3b6906efa046ee129f3e33fd933280bb6936221
+FROM registry.access.redhat.com/ubi9/ubi@sha256:1fc04e873cb3f3c8d1211729a794716e50826f650ea88b97a4ff57f601db77a8
 
-LABEL name="rhaii-validator" \
-      vendor="Red Hat" \
-      summary="RHAII Cluster Validation Agent" \
-      description="Per-node hardware validation agent for GPU, RDMA, and network checks"
+LABEL name="rhoai/odh-rhaii-cluster-validator-rhel9" \
+      com.redhat.component="odh-rhaii-cluster-validator-rhel9" \
+      summary="RHAII Cluster Validator" \
+      description="Preflight validation probe for xKS clusters - verifies GPU availability, RDMA connectivity, network bandwidth, required CRDs, and inference readiness before AI workload deployment" \
+      maintainer="Red Hat LLM-D Team" \
+      io.k8s.display-name="RHAII Cluster Validator" \
+      io.k8s.description="Preflight validation probe for xKS clusters - verifies GPU availability, RDMA connectivity, network bandwidth, required CRDs, and inference readiness before AI workload deployment"
 
 # Install tools needed by the agent
 RUN dnf install -y \
       util-linux \
       pciutils \
+      infiniband-diags \
+      libibverbs-utils \
       && dnf clean all
 
 COPY --from=builder /opt/app-root/rhaii-validator /usr/local/bin/rhaii-validator
 
-# GPU/RDMA tools (nvidia-smi, ibstat, ibv_devices) run on the host via nsenter.
-# No need to install them in the container - privileged pod + nsenter handles it.
-
+# TODO: evaluate if non-root (USER 1001) is viable — topology checks and
+# ib_write_bw may require root for device access when running in 'run' mode.
 USER 0
 
 ENTRYPOINT ["rhaii-validator"]
