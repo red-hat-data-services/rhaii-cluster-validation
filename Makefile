@@ -1,6 +1,6 @@
-.PHONY: build test container push deploy deploy-all install uninstall run logs clean clean-all help
+.PHONY: build test container container-rdma push push-rdma download install uninstall deploy deploy-all logs clean clean-all run-local fmt lint help
 
-IMG ?= quay.io/opendatahub/rhaii-validator:latest
+IMG ?= ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-cluster-validator:latest
 export IMG
 NAMESPACE ?= rhaii-validation
 VERSION ?= $(shell git describe --tags --always --dirty)
@@ -18,37 +18,74 @@ CONTAINER_RUNTIME ?= $(shell \
 		echo "echo 'Error: no container runtime found. Install podman or docker.' && exit 1"; \
 	fi)
 
+# Target platform for container images
+TARGET_PLATFORM ?= linux/amd64
+
 help:
-	@echo "rhaii-cluster-validation - GPU/RDMA validation agent"
+	@echo "rhaii-cluster-validation - GPU/RDMA cluster validation"
 	@echo ""
-	@echo "Build:"
-	@echo "  make build          - Build agent binary"
+	@echo "Quick Start:"
+	@echo "  make download       - Download and install kubectl plugin from GHCR (Linux only)"
+	@echo "  make install        - Build and install from source (Linux and macOS)"
+	@echo "  kubectl rhaii-validate all          # Run all checks"
+	@echo "  kubectl rhaii-validate gpu          # GPU checks only"
+	@echo "  kubectl rhaii-validate network      # TCP bandwidth + latency tests"
+	@echo "  kubectl rhaii-validate rdma         # All RDMA checks + connectivity + bandwidth"
+	@echo "  kubectl rhaii-validate clean        # Cleanup"
+	@echo ""
+	@echo "  Or run directly via container (Linux and macOS):"
+	@echo "    podman run --rm -it -v ~/.kube/config:/kubeconfig:z -e KUBECONFIG=/kubeconfig $(IMG) all"
+	@echo ""
+	@echo "Development:"
+	@echo "  make build          - Build binary"
 	@echo "  make test           - Run unit tests"
-	@echo "  make container      - Build container image"
-	@echo "  make push           - Push container image"
-	@echo "  make install        - Install as kubectl plugin (kubectl rhaii-validate)"
+	@echo "  make lint           - Run linter"
+	@echo "  make install        - Build + install as kubectl plugin"
 	@echo "  make uninstall      - Remove kubectl plugin"
+	@echo "  make container      - Build validator container image"
+	@echo "  make container-rdma - Build tools container image"
+	@echo "  make run-local      - Run checks locally (requires GPU node)"
 	@echo ""
-	@echo "Deploy:"
-	@echo "  make deploy         - Deploy using existing image (IMG=...)"
-	@echo "  make deploy-all     - Build + push + deploy (IMG=...)"
-	@echo "  make run            - Deploy agent DaemonSet only via kubectl (IMG=...)"
-	@echo "  make logs           - Collect agent results from pod logs"
-	@echo "  make clean          - Remove agent DaemonSet and jobs"
-	@echo "  make clean-all      - Remove all resources including ConfigMap"
-	@echo ""
-	@echo "CLI Testing:"
-	@echo "  make run-local      - Run agent locally (requires GPU node)"
+	@echo "Cleanup:"
+	@echo "  make clean          - Remove validation resources (keep report)"
+	@echo "  make clean-all      - Remove everything including report"
+
+download:
+	@# Container images contain Linux binaries — cannot run on macOS directly
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		echo "ERROR: 'make download' extracts a Linux binary from the container image."; \
+		echo "       On macOS, use 'make install' to build from source instead."; \
+		exit 1; \
+	fi
+	@# Check for existing installs that could shadow the new one
+	@EXISTING=$$(which kubectl-rhaii_validate 2>/dev/null); \
+	if [ -n "$$EXISTING" ]; then \
+		echo "WARNING: existing plugin found at $$EXISTING — removing it first"; \
+		sudo rm -f "$$EXISTING"; \
+	fi
+	@echo "Downloading kubectl plugin from container image..."
+	$(CONTAINER_RUNTIME) pull $(IMG)
+	$(CONTAINER_RUNTIME) run --rm --entrypoint cat $(IMG) /usr/local/bin/rhaii-validator > kubectl-rhaii_validate
+	chmod +x kubectl-rhaii_validate
+	sudo mv kubectl-rhaii_validate /usr/local/bin/
+	@echo "Installed! Run: kubectl rhaii-validate all"
+	@kubectl rhaii-validate --version
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/rhaii-validator ./cmd/agent/
 
 install: build
+	@# Check for existing installs that could shadow the new one
+	@EXISTING=$$(which kubectl-rhaii_validate 2>/dev/null); \
+	if [ -n "$$EXISTING" ]; then \
+		echo "WARNING: existing plugin found at $$EXISTING — removing it first"; \
+		sudo rm -f "$$EXISTING"; \
+	fi
 	@echo "Installing kubectl plugin..."
 	cp bin/rhaii-validator /usr/local/bin/kubectl-rhaii_validate 2>/dev/null || \
 		cp bin/rhaii-validator $(HOME)/.local/bin/kubectl-rhaii_validate
-	@echo "Installed! Usage: kubectl rhaii-validate deploy --image $(IMG)"
-	@echo "Verify:  kubectl plugin list | grep rhaii"
+	@echo "Installed! Run: kubectl rhaii-validate all"
+	@kubectl rhaii-validate --version
 
 uninstall:
 	rm -f /usr/local/bin/kubectl-rhaii_validate $(HOME)/.local/bin/kubectl-rhaii_validate
@@ -57,26 +94,32 @@ uninstall:
 test:
 	go test ./... -v
 
+IMG_TOOLS ?= ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-validator-tools:latest
+RDMA_BUILDER_IMAGE ?= nvcr.io/nvidia/cuda:13.0.0-devel-ubi9
+RDMA_RUNTIME_IMAGE ?= registry.redhat.io/ubi9/ubi:latest
 container:
-	$(CONTAINER_RUNTIME) build --build-arg VERSION=$(VERSION) -t $(IMG) .
+	$(CONTAINER_RUNTIME) build -f Dockerfile.dev --platform $(TARGET_PLATFORM) --build-arg VERSION=$(VERSION) --build-arg DEFAULT_IMAGE=$(IMG) -t $(IMG) .
+
+container-rdma:
+	$(CONTAINER_RUNTIME) build -f tools/Dockerfile.dev \
+		--build-arg BUILDER_IMAGE=$(RDMA_BUILDER_IMAGE) \
+		--build-arg RUNTIME_IMAGE=$(RDMA_RUNTIME_IMAGE) \
+		-t $(IMG_TOOLS) .
 
 push:
 	$(CONTAINER_RUNTIME) push $(IMG)
+
+push-rdma:
+	$(CONTAINER_RUNTIME) push $(IMG_TOOLS)
 
 deploy: install
 	kubectl rhaii-validate all
 
 deploy-all: build container push deploy
 
-run:
-	kubectl apply -f deploy/rbac.yaml
-	envsubst < deploy/daemonset.yaml | kubectl apply -f -
-	@echo "Waiting for agent pods to start..."
-	kubectl rollout status daemonset/rhaii-validator -n $(NAMESPACE) --timeout=120s
-
 logs:
-	@echo "=== Agent Results ==="
-	@for pod in $$(kubectl get pods -n $(NAMESPACE) -l app=rhaii-validator -o jsonpath='{.items[*].metadata.name}'); do \
+	@echo "=== Check Job Results ==="
+	@for pod in $$(kubectl get pods -n $(NAMESPACE) -l app=rhaii-validate-check -o jsonpath='{.items[*].metadata.name}'); do \
 		echo "--- $$pod ---"; \
 		kubectl logs -n $(NAMESPACE) $$pod 2>/dev/null; \
 		echo ""; \
@@ -84,7 +127,7 @@ logs:
 
 clean:
 	@echo "Cleaning up validation resources (preserving ConfigMap)..."
-	-kubectl delete daemonset rhaii-validator -n $(NAMESPACE) --ignore-not-found
+	-kubectl delete jobs -n $(NAMESPACE) -l app=rhaii-validate-check --ignore-not-found
 	-kubectl delete jobs -n $(NAMESPACE) -l app=rhaii-validate-job --ignore-not-found
 	-kubectl delete serviceaccount rhaii-validator -n $(NAMESPACE) --ignore-not-found
 	-kubectl delete clusterrolebinding rhaii-validator --ignore-not-found
@@ -99,7 +142,7 @@ clean-all: clean
 
 run-local:
 	@echo "Running agent locally on this node..."
-	go run ./cmd/agent/ run --no-wait --node-name $$(hostname)
+	go run ./cmd/agent/ run --node-name $$(hostname)
 
 fmt:
 	go fmt ./...

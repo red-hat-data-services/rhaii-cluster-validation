@@ -2,85 +2,79 @@
 
 kubectl plugin for validating GPU cluster readiness for AI/ML workloads.
 
+Runs preflight checks on GPU clusters before deploying inference workloads. Validates GPU hardware (drivers, ECC errors, GPU-NIC topology), RDMA connectivity, and cross-node network bandwidth. Auto-detects GPU vendor (NVIDIA/AMD), platform (AKS, EKS, CoreWeave, OpenShift), and cluster topology. Produces a pass/fail report with per-node and per-GPU-NIC results.
+
+**What it checks:**
+- GPU driver version and ECC memory errors
+- GPU-NIC NUMA topology (which GPU is closest to which NIC)
+- RDMA device presence and NIC link status
+- TCP bandwidth (iperf3) and latency between node pairs
+- RDMA bandwidth (ib_write_bw) per GPU-NIC pair
+
+**Supported platforms:** AKS, EKS, CoreWeave, OpenShift (auto-detected)
+
 ## Quick Start
 
-### Option 1: kubectl Plugin (Recommended)
+### Option 1: Download Binary (Linux, No Build Required)
 
 ```bash
-# Build and install
-make install
+# Extract kubectl plugin from published container image
+make download
 
-# Run GPU checks
-kubectl rhaii-validate gpu
+# Or manually:
+docker run --rm --entrypoint cat ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-cluster-validator:latest \
+  /usr/local/bin/rhaii-validator > kubectl-rhaii_validate
+chmod +x kubectl-rhaii_validate
+sudo mv kubectl-rhaii_validate /usr/local/bin/
 
-# Run bandwidth tests
-kubectl rhaii-validate networking
-
-# Run everything
-kubectl rhaii-validate all
-
-# Debug mode (keeps pods alive for inspection)
-kubectl rhaii-validate gpu --debug
-
-# JSON output
-kubectl rhaii-validate gpu -o json
-
-# Cleanup
-kubectl rhaii-validate clean
+# Run
+kubectl rhaii-validate gpu              # GPU hardware checks
+kubectl rhaii-validate network          # TCP bandwidth + latency tests
+kubectl rhaii-validate rdma             # All RDMA checks + connectivity + bandwidth
+kubectl rhaii-validate all              # Everything (deps + gpu + network + rdma)
+kubectl rhaii-validate all --debug      # Keep pods alive for inspection
+kubectl rhaii-validate all -o json      # JSON output
+kubectl rhaii-validate clean            # Cleanup
 ```
+
+> **macOS users:** `make download` extracts a Linux binary from the container. Use `make install` to build from source instead.
 
 ### Option 2: Container Image (No Install)
 
 ```bash
-IMG=quay.io/opendatahub/rhaii-validator:latest
+IMG=ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-cluster-validator:latest
 
-# Run GPU checks
-podman run --rm -it \
-  -v ~/.kube/config:/kubeconfig:z \
-  -e KUBECONFIG=/kubeconfig \
-  $IMG gpu
-
-# Run bandwidth tests
-podman run --rm -it \
-  -v ~/.kube/config:/kubeconfig:z \
-  -e KUBECONFIG=/kubeconfig \
-  $IMG networking
-
-# Run everything
 podman run --rm -it \
   -v ~/.kube/config:/kubeconfig:z \
   -e KUBECONFIG=/kubeconfig \
   $IMG all
 
-# Cleanup
 podman run --rm -it \
   -v ~/.kube/config:/kubeconfig:z \
   -e KUBECONFIG=/kubeconfig \
   $IMG clean
 ```
 
-### Option 3: Download Binary
+### Option 3: Build from Source
 
 ```bash
-# Download latest release
-curl -L https://github.com/opendatahub-io/rhaii-cluster-validation/releases/latest/download/kubectl-rhaii_validate-linux-amd64 -o kubectl-rhaii_validate
-chmod +x kubectl-rhaii_validate
-sudo mv kubectl-rhaii_validate /usr/local/bin/
-
-# Run
+make install
 kubectl rhaii-validate all
 ```
 
-## Build and Push
+## Development
 
 ```bash
-# Build and push container image
-make container
-make push
-
-# Build binary + install kubectl plugin + run validation
-make deploy
+make build              # Build binary
+make test               # Run unit tests
+make lint               # Run linter
+make install            # Build + install as kubectl plugin
+make container          # Build validator container image
+make container-rdma     # Build tools container image
+make run-local          # Run checks locally (requires GPU node)
 ```
+
+Container images are automatically built and pushed to GHCR on merge to `main`.
 
 ## How Each Check Works
 
@@ -207,7 +201,7 @@ PASS: `TCP bandwidth: 94.5 Gbps (threshold: 25 Gbps)`
 WARN: `TCP bandwidth: 15.0 Gbps (below 25 Gbps threshold)`
 FAIL: `TCP bandwidth: 7.6 Gbps (well below 25 Gbps threshold)`
 
-Image: `ghcr.io/llm-d/llm-d-rdma-tools-dev:latest` (from `manifests/image-references/jobs.yaml`)
+Image: `ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-validator-tools:latest` (from `manifests/image-references/jobs.yaml`)
 
 ### RDMA Bandwidth (ib_write_bw)
 
@@ -235,7 +229,7 @@ Compares against `thresholds.rdma_bandwidth_pd_gbps` from platform config.
 PASS: `RDMA bandwidth: 195.2 Gbps (threshold: 180 Gbps)`
 FAIL: `RDMA bandwidth: 50.1 Gbps (well below 180 Gbps threshold)`
 
-Image: `ghcr.io/llm-d/llm-d-rdma-tools-dev:latest` (from `manifests/image-references/jobs.yaml`)
+Image: `ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-validator-tools:latest` (from `manifests/image-references/jobs.yaml`)
 
 ## Ring Topology
 
@@ -252,7 +246,7 @@ By default, bandwidth tests use ring topology so every node is tested as both se
 
 Override with star topology:
 ```bash
-kubectl rhaii-validate networking --server-node node-1
+kubectl rhaii-validate rdma --server-node node-1
 ```
 
 ## Report
@@ -290,14 +284,14 @@ Report:
 | GPU nodes with NVIDIA or AMD GPUs | GPU driver, ECC, topology checks | AKS, OCP, CoreWeave |
 | GPU driver installed on nodes | `nvidia-smi` / `rocm-smi` must work on host | All |
 | `nvidia.com/gpu` or `amd.com/gpu` in node allocatable | Auto-discovers GPU nodes | All |
-| Cluster-admin or namespace-admin RBAC | Creates namespace, RBAC, DaemonSet, Jobs | All |
+| Cluster-admin or namespace-admin RBAC | Creates namespace, RBAC, Jobs | All |
 
 ### Required for Networking Tests
 
 | Requirement | Why |
 |-------------|-----|
 | 2+ GPU nodes | Ring topology needs at least 2 nodes |
-| Job container image pullable | `ghcr.io/llm-d/llm-d-rdma-tools-dev:latest` by default |
+| Job container image pullable | `ghcr.io/opendatahub-io/rhaii-cluster-validation/odh-rhaii-validator-tools:latest` by default |
 
 ### Required for RDMA Tests
 
@@ -322,7 +316,7 @@ Report:
 
 **CoreWeave:**
 - GPU nodes may not have `nvidia.com/gpu.present` label — auto-discovered from node allocatable resources
-- DaemonSet uses hostname affinity instead of label selector
+- Per-node Jobs use hostname affinity instead of label selector
 - RDMA device plugin in `cw-rdma` namespace
 
 **EKS:**
@@ -353,7 +347,7 @@ Report:
 ## Architecture
 
 - GPU vendor (NVIDIA/AMD) auto-detected from node labels or allocatable resources
-- GPU tools run on host via `chroot /host` (privileged DaemonSet)
+- GPU tools run on host via `chroot /host` (privileged per-node Jobs)
 - Bandwidth jobs use ring topology (every node tested as sender + receiver)
 - RDMA tests expanded per GPU-NIC pair using discovered topology
 - RDMA tests skipped if no RDMA resource configured

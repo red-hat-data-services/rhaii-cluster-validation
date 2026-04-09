@@ -34,9 +34,9 @@ func (c *DriverCheck) Run(ctx context.Context) checks.Result {
 		Name:     c.Name(),
 	}
 
-	output, err := hostExec(ctx, "nvidia-smi",
+	output, err := exec.CommandContext(ctx, "nvidia-smi",
 		"--query-gpu=driver_version,name,memory.total",
-		"--format=csv,noheader,nounits")
+		"--format=csv,noheader,nounits").Output()
 	if err != nil {
 		r.Status = checks.StatusFail
 		r.Message = fmt.Sprintf("nvidia-smi failed: %v", err)
@@ -101,15 +101,6 @@ func parseDriverOutput(output string) (*driverInfo, error) {
 		MemoryTotal:   strings.TrimSpace(fields[2]),
 		GPUCount:      len(records),
 	}, nil
-}
-
-// hostExec runs a command on the host filesystem.
-// The DaemonSet mounts the host root at /host. We use chroot to run
-// commands with the host's binaries and libraries (nvidia-smi, ibstat, etc.).
-func hostExec(ctx context.Context, name string, args ...string) ([]byte, error) {
-	chrootArgs := []string{"/host", name}
-	chrootArgs = append(chrootArgs, args...)
-	return exec.CommandContext(ctx, "chroot", chrootArgs...).Output()
 }
 
 // compareVersions compares two dot-separated version strings numerically.

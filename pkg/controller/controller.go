@@ -11,17 +11,18 @@ import (
 
 	"github.com/opendatahub-io/rhaii-cluster-validation/deploy"
 	"github.com/opendatahub-io/rhaii-cluster-validation/pkg/checks"
+	"github.com/opendatahub-io/rhaii-cluster-validation/pkg/checks/crd"
+	"github.com/opendatahub-io/rhaii-cluster-validation/pkg/checks/operator"
 	"github.com/opendatahub-io/rhaii-cluster-validation/pkg/checks/rdma"
 	"github.com/opendatahub-io/rhaii-cluster-validation/pkg/config"
 	"github.com/opendatahub-io/rhaii-cluster-validation/pkg/jobrunner"
 
-	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"gopkg.in/yaml.v3"
@@ -29,14 +30,26 @@ import (
 )
 
 const (
-	agentLabelKey   = "app"
-	agentLabelValue = "rhaii-validator"
-	configMapName   = "rhaii-validate-config"
-	reportCMName    = "rhaii-validate-report"
-	defaultTimeout  = 5 * time.Minute
-	annotationKey   = "rhaii.opendatahub.io/validation-status"
-	annotationDone  = "done"
-	annotationError = "error"
+	checkJobLabelKey          = "app"
+	gpuCheckJobLabelValue     = "rhaii-validate-gpu-check"
+	netCheckJobLabelValue     = "rhaii-validate-net-check"
+	configMapName             = "rhaii-validate-config"
+	reportCMName              = "rhaii-validate-report"
+	pingmeshFailuresCMName    = "rhaii-validate-pingmesh-failures"
+	defaultTimeout            = 5 * time.Minute
+)
+
+// CheckMode constants define the validation modes used by both the CLI
+// subcommands and the internal per-node Job pods (via CHECK_MODE env var).
+const (
+	CheckModeGPU           = "gpu"
+	CheckModeNetwork       = "network"
+	CheckModeRDMA          = "rdma"
+	CheckModeRDMANode      = "rdma-node"
+	CheckModeRDMAPing      = "rdma-ping"
+	CheckModeRDMABandwidth = "rdma-bandwidth"
+	CheckModeDeps          = "deps"
+	CheckModeAll           = "all"
 )
 
 // Options configures the controller behavior.
@@ -46,24 +59,30 @@ type Options struct {
 	Image        string
 	Timeout      time.Duration
 	ConfigFile   string
+	Nodes        []string // Restrict to specific nodes (default: all GPU nodes)
 	ServerNode   string
 	ClientNodes  []string
 	Debug        bool   // Skip cleanup so user can exec into pods for debugging
 	OutputFormat string // "table" (default) or "json"
-	CheckMode    string // "all" (default), "gpu", "networking"
+	CheckMode    string // "all", "gpu", "network", "rdma", "rdma-node", "rdma-ping", "rdma-bandwidth", "deps"
 }
 
-// Controller orchestrates agent deployment, result collection, and cleanup.
+// Controller orchestrates check job deployment, result collection, and cleanup.
 type Controller struct {
 	client       kubernetes.Interface
 	opts         Options
 	cfg          config.PlatformConfig
 	output       io.Writer
 	platform     config.Platform
-	gpuVendor    config.GPUVendor // auto-detected from node labels
-	gpuNodeLabel string           // label used to discover GPU nodes (empty = fallback to resources)
-	gpuNodes     []string         // discovered GPU node names
-	jobs         []jobrunner.Job
+	gpuVendor    config.GPUVendor   // auto-detected from node labels
+	gpuNodeLabel string             // label used to discover GPU nodes (empty = fallback to resources)
+	gpuNodes     []string           // discovered GPU node names
+	gpuCounts    map[string]int64   // GPU count per node (from allocatable)
+	gpuResource    corev1.ResourceName // e.g. "nvidia.com/gpu" or "amd.com/gpu"
+	jobs            []jobrunner.Job
+	clusterResults  []checks.Result        // Tier 1 (API) check results (CRDs, etc.)
+	pingmeshReport  *rdma.PingMeshReport   // populated by runPingMesh
+	reportStored    bool                   // true after storeReport succeeds
 }
 
 // AddJob registers a multi-node job to run when --bandwidth is enabled.
@@ -71,21 +90,112 @@ func (c *Controller) AddJob(j jobrunner.Job) {
 	c.jobs = append(c.jobs, j)
 }
 
-// storeReport saves the JSON report to a ConfigMap so it persists after cleanup.
-func (c *Controller) storeReport(ctx context.Context, reports []checks.NodeReport, jobResults []jobrunner.JobResult) error {
-	type jsonReport struct {
-		Platform   string               `json:"platform"`
-		Timestamp  string               `json:"timestamp"`
-		Nodes      []checks.NodeReport  `json:"nodes"`
-		JobResults []jobrunner.JobResult `json:"job_results,omitempty"`
-		Summary    map[string]int       `json:"summary"`
-		Status     string               `json:"status"`
+// RunCRDChecks checks for required CRDs via the Kubernetes API (Tier 1).
+func (c *Controller) RunCRDChecks(ctx context.Context) []checks.Result {
+	checker := crd.NewChecker(c.client, nil, c.cfg.CRDs.MinAPIVersions, c.cfg.CRDs.MinReleaseVersions)
+	return checker.Run(ctx)
+}
+
+// RunOperatorChecks checks that required operators have healthy pods (Tier 1).
+func (c *Controller) RunOperatorChecks(ctx context.Context) []checks.Result {
+	checker := operator.NewChecker(c.client, nil, c.cfg.Operators.Namespaces)
+	return checker.Run(ctx)
+}
+
+// RunDeps runs Tier 1 dependency checks (CRDs + operator health) and prints the report.
+// This is a lightweight path that doesn't create any cluster resources.
+func (c *Controller) RunDeps(ctx context.Context) error {
+	// Use stderr for progress so JSON mode stays machine-parseable on stdout
+	log := c.output
+	if c.opts.OutputFormat == "json" {
+		log = io.Discard
 	}
 
-	pass, warn, fail, skip := 0, 0, 0, 0
+	fmt.Fprintln(log, "=== RHAII Dependency Checks ===")
+	fmt.Fprintln(log)
+
+	// Detect platform and load config so CRD min versions are available
+	fmt.Fprintln(log, "Detecting platform...")
+	c.platform = config.DetectPlatform(ctx, c.client)
+	cfg, err := config.Load(c.platform, c.opts.ConfigFile)
+	if err != nil {
+		fmt.Fprintf(log, "  Warning: failed to load config override: %v, using platform defaults\n", err)
+		cfg, _ = config.GetConfig(c.platform)
+	}
+	c.cfg = cfg
+	fmt.Fprintf(log, "  Platform: %s\n", c.platform)
+
+	fmt.Fprintln(log, "[CRD Checks] Checking required CRDs...")
+	c.clusterResults = c.RunCRDChecks(ctx)
+	for _, r := range c.clusterResults {
+		fmt.Fprintf(log, "  [%s] %s: %s\n", r.Status, r.Name, r.Message)
+	}
+	fmt.Fprintln(log)
+
+	fmt.Fprintln(log, "[Operator Checks] Checking operator health...")
+	operatorResults := c.RunOperatorChecks(ctx)
+	c.clusterResults = append(c.clusterResults, operatorResults...)
+	for _, r := range operatorResults {
+		fmt.Fprintf(log, "  [%s] %s: %s\n", r.Status, r.Name, r.Message)
+	}
+	fmt.Fprintln(log)
+
+	var hasFailures bool
+	if c.opts.OutputFormat == "json" {
+		hasFailures = c.printJSONReport(nil, nil)
+	} else {
+		hasFailures = c.printReport(nil, nil)
+	}
+
+	if hasFailures {
+		return fmt.Errorf("dependency check failed: one or more checks reported FAIL")
+	}
+	return nil
+}
+
+// jsonReport is the report structure used for both ConfigMap storage and JSON output.
+type jsonReport struct {
+	Platform      string                `json:"platform"`
+	Timestamp     string                `json:"timestamp,omitempty"`
+	ClusterChecks []checks.Result       `json:"cluster_checks,omitempty"`
+	Nodes         []checks.NodeReport   `json:"nodes"`
+	JobResults    []jobrunner.JobResult  `json:"job_results,omitempty"`
+	Pingmesh      *rdma.PingMeshReport  `json:"pingmesh,omitempty"`
+	Summary       map[string]int        `json:"summary"`
+	Status        string                `json:"status"`
+}
+
+// countStatuses tallies pass/warn/fail/skip across all result sources.
+func countStatuses(clusterResults []checks.Result, reports []checks.NodeReport, jobResults []jobrunner.JobResult, pingmesh *rdma.PingMeshReport) (pass, warn, fail, skip int) {
+	for _, r := range clusterResults {
+		switch r.Status {
+		case checks.StatusPass:
+			pass++
+		case checks.StatusWarn:
+			warn++
+		case checks.StatusFail:
+			fail++
+		case checks.StatusSkip:
+			skip++
+		}
+	}
 	for _, report := range reports {
 		for _, r := range report.Results {
 			switch r.Status {
+			case checks.StatusPass:
+				pass++
+			case checks.StatusWarn:
+				warn++
+			case checks.StatusFail:
+				fail++
+			case checks.StatusSkip:
+				skip++
+			}
+		}
+	}
+	if pingmesh != nil {
+		for _, s := range pingmesh.Summary {
+			switch s.Status {
 			case checks.StatusPass:
 				pass++
 			case checks.StatusWarn:
@@ -107,21 +217,57 @@ func (c *Controller) storeReport(ctx context.Context, reports []checks.NodeRepor
 			fail++
 		}
 	}
+	return
+}
 
-	status := "READY"
+// readinessStatus returns the cluster readiness string based on fail/warn counts.
+func readinessStatus(fail, warn int) string {
 	if fail > 0 {
-		status = "NOT READY"
-	} else if warn > 0 {
-		status = "READY (with warnings)"
+		return "NOT READY"
 	}
+	if warn > 0 {
+		return "READY (with warnings)"
+	}
+	return "READY"
+}
+
+// storeReport saves the JSON report to a ConfigMap so it persists after cleanup.
+func (c *Controller) storeReport(ctx context.Context, reports []checks.NodeReport, jobResults []jobrunner.JobResult) error {
+	pass, warn, fail, skip := countStatuses(c.clusterResults, reports, jobResults, c.pingmeshReport)
 
 	r := jsonReport{
-		Platform:   string(c.platform),
-		Timestamp:  time.Now().UTC().Format(time.RFC3339),
-		Nodes:      reports,
-		JobResults: jobResults,
-		Summary:    map[string]int{"pass": pass, "warn": warn, "fail": fail, "skip": skip},
-		Status:     status,
+		Platform:      string(c.platform),
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+		ClusterChecks: c.clusterResults,
+		Nodes:         reports,
+		JobResults:    jobResults,
+		Pingmesh:      c.pingmeshReport,
+		Summary:       map[string]int{"pass": pass, "warn": warn, "fail": fail, "skip": skip},
+		Status:        readinessStatus(fail, warn),
+	}
+
+	// Merge with existing report: preserve fields this run didn't produce
+	// (e.g. rdma-ping doesn't produce Nodes/JobResults, rdma-bandwidth doesn't produce Pingmesh)
+	existing, getErr := c.client.CoreV1().ConfigMaps(c.opts.Namespace).Get(ctx, reportCMName, metav1.GetOptions{})
+	if getErr == nil {
+		if prev, ok := existing.Data["report.json"]; ok {
+			var old jsonReport
+			if json.Unmarshal([]byte(prev), &old) == nil {
+				if len(r.Nodes) == 0 && len(old.Nodes) > 0 {
+					r.Nodes = old.Nodes
+				}
+				if len(r.JobResults) == 0 && len(old.JobResults) > 0 {
+					r.JobResults = old.JobResults
+				}
+				if r.Pingmesh == nil && old.Pingmesh != nil {
+					r.Pingmesh = old.Pingmesh
+				}
+				// Recompute summary from merged data so preserved FAILs/WARNs are reflected
+				pass, warn, fail, skip = countStatuses(r.ClusterChecks, r.Nodes, r.JobResults, r.Pingmesh)
+				r.Summary = map[string]int{"pass": pass, "warn": warn, "fail": fail, "skip": skip}
+				r.Status = readinessStatus(fail, warn)
+			}
+		}
 	}
 
 	data, err := json.MarshalIndent(r, "", "  ")
@@ -133,7 +279,7 @@ func (c *Controller) storeReport(ctx context.Context, reports []checks.NodeRepor
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      reportCMName,
 			Namespace: c.opts.Namespace,
-			Labels:    map[string]string{agentLabelKey: agentLabelValue},
+			Labels:    map[string]string{"app": "rhaii-validator"},
 		},
 		Data: map[string]string{
 			"report.json": string(data),
@@ -141,44 +287,61 @@ func (c *Controller) storeReport(ctx context.Context, reports []checks.NodeRepor
 	}
 
 	// Update if exists, create if not
-	existing, err := c.client.CoreV1().ConfigMaps(c.opts.Namespace).Get(ctx, reportCMName, metav1.GetOptions{})
-	if err == nil {
+	if getErr == nil {
 		existing.Data = cm.Data
 		_, err = c.client.CoreV1().ConfigMaps(c.opts.Namespace).Update(ctx, existing, metav1.UpdateOptions{})
-	} else if apierrors.IsNotFound(err) {
+	} else if apierrors.IsNotFound(getErr) {
 		_, err = c.client.CoreV1().ConfigMaps(c.opts.Namespace).Create(ctx, cm, metav1.CreateOptions{})
+	} else {
+		return getErr
 	}
 
 	if err != nil {
 		return err
 	}
 
+	c.reportStored = true
 	fmt.Fprintf(c.output, "  Report stored in ConfigMap %s/%s\n", c.opts.Namespace, reportCMName)
 	return nil
 }
 
-// printDebugHelp lists actual pod names and useful debug commands.
-func (c *Controller) printDebugHelp(ctx context.Context, gpuNodes []string) {
+// printDebugHelp lists actual pod/job names and useful debug commands.
+func (c *Controller) printDebugHelp(ctx context.Context) {
 	ns := c.opts.Namespace
 
 	fmt.Fprintln(c.output, "")
 	fmt.Fprintln(c.output, "=== DEBUG MODE ===")
-	fmt.Fprintln(c.output, "Pods kept alive for debugging.")
+	fmt.Fprintln(c.output, "Jobs kept alive for debugging.")
 	fmt.Fprintln(c.output, "")
 
-	// List actual agent pods
+	// List all validation jobs (GPU check + net check + bandwidth)
+	for _, selector := range []string{
+		checkJobLabelKey + "=" + gpuCheckJobLabelValue,
+		checkJobLabelKey + "=" + netCheckJobLabelValue,
+		"app=rhaii-validate-job",
+	} {
+		jobs, err := c.client.BatchV1().Jobs(ns).List(ctx, metav1.ListOptions{
+			LabelSelector: selector,
+		})
+		if err != nil || len(jobs.Items) == 0 {
+			continue
+		}
+		fmt.Fprintf(c.output, "Jobs (%s):\n", selector)
+		for _, j := range jobs.Items {
+			fmt.Fprintf(c.output, "  kubectl logs -n %s -l job-name=%s\n", ns, j.Name)
+		}
+		fmt.Fprintln(c.output)
+	}
+
+	// List pods from check jobs (GPU + RDMA node)
+	allCheckSelector := checkJobLabelKey + " in (" + gpuCheckJobLabelValue + "," + netCheckJobLabelValue + ")"
 	pods, err := c.client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
-		LabelSelector: labels.Set{agentLabelKey: agentLabelValue}.AsSelector().String(),
+		LabelSelector: allCheckSelector,
 	})
 	if err == nil && len(pods.Items) > 0 {
-		fmt.Fprintln(c.output, "Agent pods:")
+		fmt.Fprintln(c.output, "Check pods:")
 		for _, pod := range pods.Items {
 			fmt.Fprintf(c.output, "  %s (node: %s, status: %s)\n", pod.Name, pod.Spec.NodeName, pod.Status.Phase)
-		}
-		fmt.Fprintln(c.output, "")
-		fmt.Fprintln(c.output, "View logs:")
-		for _, pod := range pods.Items {
-			fmt.Fprintf(c.output, "  kubectl logs -n %s %s\n", ns, pod.Name)
 		}
 		fmt.Fprintln(c.output, "")
 		fmt.Fprintln(c.output, "Exec into pod:")
@@ -187,29 +350,11 @@ func (c *Controller) printDebugHelp(ctx context.Context, gpuNodes []string) {
 		}
 	}
 
-	// List job resources
-	jobs, err := c.client.BatchV1().Jobs(ns).List(ctx, metav1.ListOptions{
-		LabelSelector: "app=rhaii-validate-job",
-	})
-	if err == nil && len(jobs.Items) > 0 {
-		fmt.Fprintln(c.output, "")
-		fmt.Fprintln(c.output, "Job specs:")
-		for _, j := range jobs.Items {
-			fmt.Fprintf(c.output, "  kubectl get job %s -n %s -o yaml\n", j.Name, ns)
-		}
-		fmt.Fprintln(c.output, "")
-		fmt.Fprintln(c.output, "Job logs:")
-		for _, j := range jobs.Items {
-			fmt.Fprintf(c.output, "  kubectl logs -n %s -l job-name=%s\n", ns, j.Name)
-		}
-	}
-
 	fmt.Fprintln(c.output, "")
-	fmt.Fprintln(c.output, "Debug commands inside agent pod:")
-	fmt.Fprintln(c.output, "  chroot /host nvidia-smi")
+	fmt.Fprintln(c.output, "Debug commands inside check pod:")
+	fmt.Fprintln(c.output, "  nvidia-smi")
 	fmt.Fprintln(c.output, "  chroot /host ibv_devices")
 	fmt.Fprintln(c.output, "  chroot /host ibstat")
-	fmt.Fprintln(c.output, "  cat /host/proc/driver/nvidia/version")
 	fmt.Fprintln(c.output, "  ls /dev/nvidia*")
 	fmt.Fprintln(c.output, "")
 	fmt.Fprintf(c.output, "Cleanup: kubectl rhaii-validate clean\n")
@@ -220,20 +365,30 @@ func (c *Controller) Cleanup() error {
 	ctx := context.Background()
 	fmt.Fprintln(c.output, "Cleaning up all validation resources...")
 
-	// Delete all validation jobs
 	propagation := metav1.DeletePropagationBackground
-	jobs, err := c.client.BatchV1().Jobs(c.opts.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app=rhaii-validate-job",
-	})
-	if err == nil {
-		for _, j := range jobs.Items {
-			_ = c.client.BatchV1().Jobs(c.opts.Namespace).Delete(ctx, j.Name, metav1.DeleteOptions{
-				PropagationPolicy: &propagation,
-			})
+	for _, selector := range []string{
+		checkJobLabelKey + "=" + gpuCheckJobLabelValue,
+		checkJobLabelKey + "=" + netCheckJobLabelValue,
+		"app=rhaii-validate-job",
+	} {
+		jobs, err := c.client.BatchV1().Jobs(c.opts.Namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: selector,
+		})
+		if err == nil {
+			for _, j := range jobs.Items {
+				_ = c.client.BatchV1().Jobs(c.opts.Namespace).Delete(ctx, j.Name, metav1.DeleteOptions{
+					PropagationPolicy: &propagation,
+				})
+			}
+			if len(jobs.Items) > 0 {
+				fmt.Fprintf(c.output, "  Deleted %d job(s) (%s)\n", len(jobs.Items), selector)
+			}
 		}
-		if len(jobs.Items) > 0 {
-			fmt.Fprintf(c.output, "  Deleted %d job(s)\n", len(jobs.Items))
-		}
+	}
+
+	// Delete pingmesh failures ConfigMap (explicit clean removes everything)
+	if err := c.client.CoreV1().ConfigMaps(c.opts.Namespace).Delete(ctx, pingmeshFailuresCMName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		fmt.Fprintf(c.output, "  Warning: failed to delete %s: %v\n", pingmeshFailuresCMName, err)
 	}
 
 	if err := c.cleanupAll(ctx); err != nil {
@@ -281,12 +436,12 @@ func (c *Controller) Run(ctx context.Context) error {
 	fmt.Fprintln(c.output, "=== RHAII Cluster Validation ===")
 	fmt.Fprintln(c.output)
 
-	// Step 1: Cleanup previous runs (DaemonSet + leftover jobs)
+	// Step 1: Cleanup previous runs (GPU check + net check + bandwidth + pingmesh jobs)
 	fmt.Fprintln(c.output, "[Step 1] Cleaning up previous runs...")
-	if err := c.cleanupDaemonSet(ctx); err != nil {
-		fmt.Fprintf(c.output, "  Warning: cleanup failed: %v\n", err)
-	}
-	c.cleanupJobs(ctx)
+	c.cleanupGpuCheckJobs(ctx)
+	c.cleanupNetCheckJobs(ctx)
+	c.cleanupBandwidthJobs(ctx)
+	c.cleanupPingMeshJobs(ctx)
 
 	// Step 2: Ensure namespace exists
 	fmt.Fprintln(c.output, "[Step 2] Ensuring namespace exists...")
@@ -306,66 +461,178 @@ func (c *Controller) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to create platform config: %w", err)
 	}
 
-	// OpenShift: grant privileged SCC to service account
+	// OpenShift: grant hostmount-anyuid SCC (needed for /host volume mount)
 	if c.platform == config.PlatformOCP {
 		if err := c.ensureOpenShiftSCC(ctx); err != nil {
 			fmt.Fprintf(c.output, "  Warning: failed to create SCC binding: %v\n", err)
 		}
 	}
 
-	// Step 5: Discover GPU nodes
-	fmt.Fprintln(c.output, "[Step 5] Discovering GPU nodes...")
+	// Step 5: Tier 1 checks (CRDs + operator health)
+	if c.opts.CheckMode == CheckModeAll || c.opts.CheckMode == CheckModeDeps {
+		fmt.Fprintln(c.output, "[Step 5] Checking required CRDs...")
+		c.clusterResults = c.RunCRDChecks(ctx)
+		for _, r := range c.clusterResults {
+			fmt.Fprintf(c.output, "  [%s] %s: %s\n", r.Status, r.Name, r.Message)
+		}
+
+		fmt.Fprintln(c.output, "[Step 5b] Checking operator health...")
+		operatorResults := c.RunOperatorChecks(ctx)
+		c.clusterResults = append(c.clusterResults, operatorResults...)
+		for _, r := range operatorResults {
+			fmt.Fprintf(c.output, "  [%s] %s: %s\n", r.Status, r.Name, r.Message)
+		}
+	}
+
+	// Step 6: Discover GPU nodes
+	fmt.Fprintln(c.output, "[Step 6] Discovering GPU nodes...")
 	gpuNodes, err := c.discoverGPUNodes(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to discover GPU nodes: %w", err)
 	}
 	c.gpuNodes = gpuNodes
 	if len(gpuNodes) == 0 {
-		fmt.Fprintln(c.output, "  No GPU nodes found. Nothing to validate.")
+		fmt.Fprintln(c.output, "  No GPU nodes found.")
+
+		// Still report Tier 1 results (CRD checks) even without GPU nodes
+		if len(c.clusterResults) > 0 {
+			if c.opts.OutputFormat == "json" {
+				c.printJSONReport(nil, nil)
+			} else {
+				c.printReport(nil, nil)
+			}
+		}
+
+		hasCRDFailures := false
+		for _, r := range c.clusterResults {
+			if r.Status == checks.StatusFail {
+				hasCRDFailures = true
+				break
+			}
+		}
+		if hasCRDFailures {
+			return fmt.Errorf("validation failed: one or more dependency checks reported FAIL")
+		}
 		return nil
 	}
 	fmt.Fprintf(c.output, "  Found %d GPU node(s): %s\n", len(gpuNodes), strings.Join(gpuNodes, ", "))
-
-	// Step 6: Deploy agent DaemonSet
-	fmt.Fprintln(c.output, "[Step 6] Deploying agent DaemonSet...")
-	if err := c.deployAgent(ctx); err != nil {
-		return fmt.Errorf("failed to deploy agent: %w", err)
+	for _, name := range gpuNodes {
+		if count, ok := c.gpuCounts[name]; ok {
+			fmt.Fprintf(c.output, "    %s: %d GPU(s) [%s]\n", name, count, c.gpuResource)
+		}
 	}
 
-	// Step 7: Wait for agents and collect results
-	fmt.Fprintln(c.output, "[Step 7] Waiting for agents to complete and collecting results...")
-	reports, err := c.waitAndCollect(ctx, gpuNodes)
-	if err != nil {
-		fmt.Fprintf(c.output, "  Warning: collection error: %v\n", err)
+	// Step 6: Deploy per-node GPU check Jobs
+	var gpuReports []checks.NodeReport
+	needGpuChecks := c.opts.CheckMode == CheckModeGPU || c.opts.CheckMode == CheckModeAll
+	if needGpuChecks {
+		fmt.Fprintln(c.output, "[Step 6] Deploying per-node GPU check Jobs...")
+		if err := c.deployGpuCheckJobs(ctx); err != nil {
+			return fmt.Errorf("failed to deploy GPU check jobs: %w", err)
+		}
+
+		fmt.Fprintln(c.output, "[Step 6] Waiting for GPU check Jobs to complete...")
+		gpuReports, err = c.waitAndCollectGpuCheckJobs(ctx)
+		if err != nil {
+			fmt.Fprintf(c.output, "  Warning: GPU check collection error: %v\n", err)
+		}
+
+		if !c.opts.Debug {
+			c.cleanupGpuCheckJobs(ctx)
+		}
 	}
 
-	// Step 8: Run multi-node jobs (automatically when 2+ GPU nodes and jobs registered)
+	// Step 7: Deploy per-node RDMA node check Jobs (topology + devices + NIC status)
+	var netReports []checks.NodeReport
+	needNetChecks := c.opts.CheckMode == CheckModeRDMA || c.opts.CheckMode == CheckModeRDMANode || c.opts.CheckMode == CheckModeAll
+	if needNetChecks {
+		fmt.Fprintln(c.output, "[Step 7] Deploying per-node RDMA node check Jobs...")
+		if err := c.deployNetCheckJobs(ctx); err != nil {
+			return fmt.Errorf("failed to deploy RDMA node check jobs: %w", err)
+		}
+
+		fmt.Fprintln(c.output, "[Step 7] Waiting for RDMA node check Jobs to complete...")
+		netReports, err = c.waitAndCollectNetCheckJobs(ctx)
+		if err != nil {
+			fmt.Fprintf(c.output, "  Warning: RDMA node check collection error: %v\n", err)
+		}
+
+		if !c.opts.Debug {
+			c.cleanupNetCheckJobs(ctx)
+		}
+	}
+
+	// Step 7b: Run pingmesh RDMA connectivity test
+	needPingMesh := c.opts.CheckMode == CheckModeRDMA || c.opts.CheckMode == CheckModeRDMAPing || c.opts.CheckMode == CheckModeAll
+	if needPingMesh && len(gpuNodes) >= 2 {
+		// Load topology if rdma-node didn't run this session
+		pmNetReports := netReports
+		if len(pmNetReports) == 0 {
+			stored, topoErr := c.loadTopologyFromReport(ctx, gpuNodes)
+			if topoErr != nil {
+				fmt.Fprintf(c.output, "  Warning: %v\n", topoErr)
+				fmt.Fprintln(c.output, "  Hint: run 'kubectl rhaii-validate rdma-node' first to generate topology")
+			} else {
+				pmNetReports = stored
+				fmt.Fprintf(c.output, "  Loaded topology for %d node(s) from stored report\n", len(stored))
+			}
+		} else if !topologyCoversAllNodes(pmNetReports, gpuNodes) {
+			fmt.Fprintf(c.output, "  Warning: in-session topology incomplete for all GPU nodes, skipping pingmesh\n")
+			fmt.Fprintln(c.output, "  Hint: run 'kubectl rhaii-validate rdma-node' on all GPU nodes first")
+			pmNetReports = nil
+		}
+		if len(pmNetReports) > 0 {
+			fmt.Fprintln(c.output, "[Step 7b] Running RDMA connectivity mesh (pingmesh)...")
+			if err := c.runPingMesh(ctx, gpuNodes, pmNetReports); err != nil {
+				fmt.Fprintf(c.output, "  Warning: pingmesh error: %v\n", err)
+			}
+		}
+	}
+
+	// Step 8: Run multi-node bandwidth jobs (using topology from RDMA node reports)
 	var jobResults []jobrunner.JobResult
-	if len(c.jobs) > 0 && len(gpuNodes) >= 2 {
+	needBandwidth := c.opts.CheckMode == CheckModeNetwork || c.opts.CheckMode == CheckModeRDMA || c.opts.CheckMode == CheckModeRDMABandwidth || c.opts.CheckMode == CheckModeAll
+	shouldRunBandwidth := needBandwidth && len(c.jobs) > 0 && len(gpuNodes) >= 2
+	if shouldRunBandwidth {
+		// If net checks didn't run this session, load topology from stored report
+		if len(netReports) == 0 {
+			stored, topoErr := c.loadTopologyFromReport(ctx, gpuNodes)
+			if topoErr != nil {
+				fmt.Fprintf(c.output, "  Warning: %v\n", topoErr)
+				fmt.Fprintln(c.output, "  Hint: run 'kubectl rhaii-validate rdma-node' first to generate topology")
+			} else {
+				netReports = stored
+				fmt.Fprintf(c.output, "  Loaded topology for %d node(s) from stored report\n", len(stored))
+			}
+		}
+
 		fmt.Fprintln(c.output, "[Step 8] Running multi-node tests...")
-		jr, err := c.runBandwidthJobs(ctx, gpuNodes, reports)
+		jr, err := c.runBandwidthJobs(ctx, gpuNodes, netReports)
 		if err != nil {
 			fmt.Fprintf(c.output, "  Warning: bandwidth test error: %v\n", err)
 		}
 		jobResults = jr
 	}
 
+	// Merge GPU + RDMA node reports for the combined report
+	allReports := mergeNodeReports(gpuReports, netReports)
+
 	// Store report in ConfigMap (persists after cleanup)
-	if err := c.storeReport(ctx, reports, jobResults); err != nil {
+	if err := c.storeReport(ctx, allReports, jobResults); err != nil {
 		fmt.Fprintf(c.output, "  Warning: failed to store report: %v\n", err)
 	}
 
 	// Print report
 	var hasFailures bool
 	if c.opts.OutputFormat == "json" {
-		hasFailures = c.printJSONReport(reports, jobResults)
+		hasFailures = c.printJSONReport(allReports, jobResults)
 	} else {
-		hasFailures = c.printReport(reports, jobResults)
+		hasFailures = c.printReport(allReports, jobResults)
 	}
 
 	// Cleanup or keep for debugging
 	if c.opts.Debug {
-		c.printDebugHelp(ctx, gpuNodes)
+		c.printDebugHelp(ctx)
 	} else {
 		fmt.Fprintln(c.output, "Cleaning up...")
 		if err := c.cleanupAll(ctx); err != nil {
@@ -373,11 +640,25 @@ func (c *Controller) Run(ctx context.Context) error {
 		}
 	}
 
-	if len(reports) == 0 && len(gpuNodes) > 0 {
+	totalReports := len(gpuReports) + len(netReports)
+	hasPingmesh := c.pingmeshReport != nil
+	if totalReports == 0 && !hasPingmesh && len(gpuNodes) > 0 {
 		if c.opts.Debug {
 			return fmt.Errorf("failed to collect reports — pods kept alive for debugging")
 		}
 		return fmt.Errorf("failed to collect any reports from %d GPU node(s)", len(gpuNodes))
+	}
+	expectedReports := 0
+	if needGpuChecks {
+		expectedReports += len(gpuNodes)
+	}
+	if needNetChecks {
+		expectedReports += len(gpuNodes)
+	}
+	actualReports := len(gpuReports) + len(netReports)
+	if actualReports > 0 && actualReports < expectedReports {
+		return fmt.Errorf("partial results: collected %d/%d node reports (some nodes may lack free resources)",
+			actualReports, expectedReports)
 	}
 	if hasFailures {
 		return fmt.Errorf("validation failed: one or more checks reported FAIL")
@@ -408,7 +689,7 @@ func (c *Controller) detectAndCreateConfig(ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      configMapName,
 			Namespace: c.opts.Namespace,
-			Labels:    map[string]string{agentLabelKey: agentLabelValue},
+			Labels:    map[string]string{"app": "rhaii-validator"},
 		},
 		Data: map[string]string{
 			"platform.yaml": string(cfgYAML),
@@ -420,10 +701,13 @@ func (c *Controller) detectAndCreateConfig(ctx context.Context) error {
 	if err == nil {
 		// ConfigMap exists — merge user's overrides on top of detected defaults
 		if existingYAML, ok := existing.Data["platform.yaml"]; ok {
-			// Unmarshal user config on top of detected defaults (only set fields are overridden)
 			if yamlErr := yaml.Unmarshal([]byte(existingYAML), &cfg); yamlErr != nil {
-				fmt.Fprintf(c.output, "  Warning: failed to parse existing ConfigMap YAML: %v\n", yamlErr)
+				return fmt.Errorf("failed to parse existing ConfigMap %s/%s platform.yaml: %w",
+					c.opts.Namespace, configMapName, yamlErr)
 			}
+		}
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("existing ConfigMap has invalid config: %w", err)
 		}
 		c.cfg = cfg
 		fmt.Fprintf(c.output, "  ConfigMap %s/%s already exists, using existing config (platform: %s)\n",
@@ -456,7 +740,8 @@ var gpuNodeSelectors = []struct {
 }
 
 func (c *Controller) discoverGPUNodes(ctx context.Context) ([]string, error) {
-	// Try each vendor's node selector until we find GPU nodes
+	c.gpuCounts = make(map[string]int64)
+
 	// Try label-based discovery first
 	for _, gs := range gpuNodeSelectors {
 		nodes, err := c.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{
@@ -468,12 +753,19 @@ func (c *Controller) discoverGPUNodes(ctx context.Context) ([]string, error) {
 		if len(nodes.Items) > 0 {
 			c.gpuVendor = gs.vendor
 			c.gpuNodeLabel = gs.selector
+			c.gpuResource = gpuResourceForVendor(gs.vendor)
 			var names []string
 			for _, node := range nodes.Items {
+				count := gpuCountFromNode(node)
+				if count == 0 {
+					fmt.Fprintf(c.output, "  Warning: node %s has GPU label but 0 allocatable GPUs, skipping\n", node.Name)
+					continue
+				}
 				names = append(names, node.Name)
+				c.gpuCounts[node.Name] = count
 			}
 			fmt.Fprintf(c.output, "  GPU vendor: %s (auto-detected from node labels)\n", gs.vendor)
-			return names, nil
+			return c.filterNodes(names), nil
 		}
 	}
 
@@ -487,12 +779,14 @@ func (c *Controller) discoverGPUNodes(ctx context.Context) ([]string, error) {
 		for _, resName := range gpuResourceNames {
 			if qty, ok := node.Status.Allocatable[resName]; ok && qty.Value() > 0 {
 				names = append(names, node.Name)
+				c.gpuCounts[node.Name] = qty.Value()
 				if c.gpuVendor == "" {
 					if strings.Contains(string(resName), "nvidia") {
 						c.gpuVendor = config.GPUVendorNVIDIA
 					} else if strings.Contains(string(resName), "amd") {
 						c.gpuVendor = config.GPUVendorAMD
 					}
+					c.gpuResource = resName
 				}
 				break
 			}
@@ -501,7 +795,46 @@ func (c *Controller) discoverGPUNodes(ctx context.Context) ([]string, error) {
 	if len(names) > 0 {
 		fmt.Fprintf(c.output, "  GPU vendor: %s (auto-detected from node resources)\n", c.gpuVendor)
 	}
-	return names, nil
+	return c.filterNodes(names), nil
+}
+
+// gpuResourceForVendor returns the GPU resource name for a vendor.
+func gpuResourceForVendor(vendor config.GPUVendor) corev1.ResourceName {
+	switch vendor {
+	case config.GPUVendorAMD:
+		return "amd.com/gpu"
+	default:
+		return "nvidia.com/gpu"
+	}
+}
+
+// gpuCountFromNode returns the total GPU count from node allocatable.
+func gpuCountFromNode(node corev1.Node) int64 {
+	for _, resName := range gpuResourceNames {
+		if qty, ok := node.Status.Allocatable[resName]; ok && qty.Value() > 0 {
+			return qty.Value()
+		}
+	}
+	return 0
+}
+
+// filterNodes restricts the discovered node list to only those specified
+// in opts.Nodes. If opts.Nodes is empty, all nodes are returned.
+func (c *Controller) filterNodes(discovered []string) []string {
+	if len(c.opts.Nodes) == 0 {
+		return discovered
+	}
+	allowed := make(map[string]bool, len(c.opts.Nodes))
+	for _, n := range c.opts.Nodes {
+		allowed[n] = true
+	}
+	var filtered []string
+	for _, n := range discovered {
+		if allowed[n] {
+			filtered = append(filtered, n)
+		}
+	}
+	return filtered
 }
 
 // gpuResourceNames are the known extended resource names for GPUs across vendors.
@@ -604,132 +937,263 @@ func splitYAMLDocuments(data []byte) [][]byte {
 	return docs
 }
 
-func (c *Controller) deployAgent(ctx context.Context) error {
-	var ds appsv1.DaemonSet
-	if err := k8syaml.Unmarshal(deploy.DaemonSetYAML, &ds); err != nil {
-		return fmt.Errorf("failed to parse embedded daemonset.yaml: %w", err)
+// deployGpuCheckJobs creates one Job per GPU node. Each Job requests all GPUs on
+// the node so nvidia-smi (injected by the NVIDIA container runtime) can see
+// every GPU for driver and ECC checks.
+func (c *Controller) deployGpuCheckJobs(ctx context.Context) error {
+	var jobTemplate batchv1.Job
+	if err := k8syaml.Unmarshal(deploy.NodeCheckJobYAML, &jobTemplate); err != nil {
+		return fmt.Errorf("failed to parse embedded node-check-job.yaml: %w", err)
 	}
 
-	// Override dynamic fields
-	ds.Namespace = c.opts.Namespace
-	ds.Spec.Template.Spec.Containers[0].Image = c.opts.Image
+	for _, nodeName := range c.gpuNodes {
+		job := jobTemplate.DeepCopy()
 
-	// Apply agent resources from platform config
-	if len(c.cfg.Agent.Requests) > 0 || len(c.cfg.Agent.Limits) > 0 {
-		reqs := corev1.ResourceRequirements{}
-		if len(c.cfg.Agent.Requests) > 0 {
-			reqs.Requests = make(corev1.ResourceList)
-			for k, v := range c.cfg.Agent.Requests {
-				qty, err := resource.ParseQuantity(v)
-				if err != nil {
-					return fmt.Errorf("invalid agent resource %q for %s: %w", v, k, err)
-				}
-				reqs.Requests[corev1.ResourceName(k)] = qty
+		// Unique name per node
+		jobName := fmt.Sprintf("rhaii-validate-check-%s", sanitizeNodeName(nodeName))
+		if len(jobName) > 63 {
+			jobName = jobName[:63]
+		}
+		job.Name = jobName
+		job.Namespace = c.opts.Namespace
+
+		// Override labels to GPU-check specific value
+		job.Labels[checkJobLabelKey] = gpuCheckJobLabelValue
+		job.Spec.Template.Labels[checkJobLabelKey] = gpuCheckJobLabelValue
+
+		container := &job.Spec.Template.Spec.Containers[0]
+		container.Image = c.opts.Image
+
+		// Pin to specific node
+		job.Spec.Template.Spec.NodeSelector = map[string]string{
+			"kubernetes.io/hostname": nodeName,
+		}
+
+		// Request all GPUs so nvidia-smi sees every GPU
+		gpuCount := c.gpuCounts[nodeName]
+		if gpuCount > 0 && c.gpuResource != "" {
+			gpuQty := resource.MustParse(fmt.Sprintf("%d", gpuCount))
+			if container.Resources.Requests == nil {
+				container.Resources.Requests = make(corev1.ResourceList)
 			}
-		}
-		if len(c.cfg.Agent.Limits) > 0 {
-			reqs.Limits = make(corev1.ResourceList)
-			for k, v := range c.cfg.Agent.Limits {
-				qty, err := resource.ParseQuantity(v)
-				if err != nil {
-					return fmt.Errorf("invalid agent limit %q for %s: %w", v, k, err)
-				}
-				reqs.Limits[corev1.ResourceName(k)] = qty
+			if container.Resources.Limits == nil {
+				container.Resources.Limits = make(corev1.ResourceList)
 			}
+			container.Resources.Requests[c.gpuResource] = gpuQty
+			container.Resources.Limits[c.gpuResource] = gpuQty
 		}
-		ds.Spec.Template.Spec.Containers[0].Resources = reqs
-	}
 
-	// Pass auto-detected vendor so agent knows which checks to run
-	if c.gpuVendor != "" {
-		container := &ds.Spec.Template.Spec.Containers[0]
-		container.Env = append(container.Env, corev1.EnvVar{
-			Name:  "GPU_VENDOR",
-			Value: string(c.gpuVendor),
-		})
-		checkMode := c.opts.CheckMode
-		if checkMode == "" {
-			checkMode = "all"
+		// Apply agent cpu/memory resources from platform config
+		for k, v := range c.cfg.Agent.Requests {
+			qty, err := resource.ParseQuantity(v)
+			if err != nil {
+				return fmt.Errorf("invalid agent resource %q for %s: %w", v, k, err)
+			}
+			if container.Resources.Requests == nil {
+				container.Resources.Requests = make(corev1.ResourceList)
+			}
+			container.Resources.Requests[corev1.ResourceName(k)] = qty
 		}
-		container.Env = append(container.Env, corev1.EnvVar{
-			Name:  "CHECK_MODE",
-			Value: checkMode,
-		})
-	}
+		for k, v := range c.cfg.Agent.Limits {
+			qty, err := resource.ParseQuantity(v)
+			if err != nil {
+				return fmt.Errorf("invalid agent limit %q for %s: %w", v, k, err)
+			}
+			if container.Resources.Limits == nil {
+				container.Resources.Limits = make(corev1.ResourceList)
+			}
+			container.Resources.Limits[corev1.ResourceName(k)] = qty
+		}
 
-	// Set node selector: use GPU label if available, otherwise use hostname list
-	if c.gpuNodeLabel != "" {
-		parts := strings.SplitN(c.gpuNodeLabel, "=", 2)
-		if len(parts) == 2 {
-			ds.Spec.Template.Spec.NodeSelector = map[string]string{parts[0]: parts[1]}
-		}
-	} else if len(c.gpuNodes) > 0 {
-		// No GPU label — use node affinity to target discovered GPU nodes
-		ds.Spec.Template.Spec.NodeSelector = nil
-		ds.Spec.Template.Spec.Affinity = &corev1.Affinity{
-			NodeAffinity: &corev1.NodeAffinity{
-				RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-					NodeSelectorTerms: []corev1.NodeSelectorTerm{{
-						MatchExpressions: []corev1.NodeSelectorRequirement{{
-							Key:      "kubernetes.io/hostname",
-							Operator: corev1.NodeSelectorOpIn,
-							Values:   c.gpuNodes,
-						}},
-					}},
-				},
-			},
-		}
-		fmt.Fprintf(c.output, "  Using hostname affinity for %d GPU node(s) (no GPU label found)\n", len(c.gpuNodes))
-	}
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: "GPU_VENDOR", Value: string(c.gpuVendor)},
+			corev1.EnvVar{Name: "CHECK_MODE", Value: CheckModeGPU},
+		)
 
-	_, err := c.client.AppsV1().DaemonSets(c.opts.Namespace).Create(ctx, &ds, metav1.CreateOptions{})
-	return err
+		_, err := c.client.BatchV1().Jobs(c.opts.Namespace).Create(ctx, job, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create GPU check job for node %s: %w", nodeName, err)
+		}
+		fmt.Fprintf(c.output, "  Created GPU check job %s (node: %s, GPUs: %d)\n", jobName, nodeName, gpuCount)
+	}
+	return nil
 }
 
-func (c *Controller) waitAndCollect(ctx context.Context, gpuNodes []string) ([]checks.NodeReport, error) {
+// deployNetCheckJobs creates one Job per GPU node for RDMA node checks
+// (topology discovery, RDMA device checks, NIC status). Each Job requests
+// GPU resources (for nvidia-smi in topology) plus RDMA resources from the
+// platform-specific jobs config.
+func (c *Controller) deployNetCheckJobs(ctx context.Context) error {
+	var jobTemplate batchv1.Job
+	if err := k8syaml.Unmarshal(deploy.NodeCheckJobYAML, &jobTemplate); err != nil {
+		return fmt.Errorf("failed to parse embedded node-check-job.yaml: %w", err)
+	}
+
+	for _, nodeName := range c.gpuNodes {
+		job := jobTemplate.DeepCopy()
+
+		jobName := fmt.Sprintf("rhaii-validate-net-%s", sanitizeNodeName(nodeName))
+		if len(jobName) > 63 {
+			jobName = jobName[:63]
+		}
+		job.Name = jobName
+		job.Namespace = c.opts.Namespace
+
+		// Override labels to net-check specific value
+		job.Labels[checkJobLabelKey] = netCheckJobLabelValue
+		job.Spec.Template.Labels[checkJobLabelKey] = netCheckJobLabelValue
+
+		container := &job.Spec.Template.Spec.Containers[0]
+		container.Image = c.opts.Image
+
+		// Pin to specific node
+		job.Spec.Template.Spec.NodeSelector = map[string]string{
+			"kubernetes.io/hostname": nodeName,
+		}
+
+		if container.Resources.Requests == nil {
+			container.Resources.Requests = make(corev1.ResourceList)
+		}
+		if container.Resources.Limits == nil {
+			container.Resources.Limits = make(corev1.ResourceList)
+		}
+
+		// Request all GPUs (needed for nvidia-smi in topology discovery)
+		gpuCount := c.gpuCounts[nodeName]
+		if gpuCount > 0 && c.gpuResource != "" {
+			gpuQty := resource.MustParse(fmt.Sprintf("%d", gpuCount))
+			container.Resources.Requests[c.gpuResource] = gpuQty
+			container.Resources.Limits[c.gpuResource] = gpuQty
+		}
+
+		// Apply RDMA + cpu/memory resources from platform jobs config
+		for k, v := range c.cfg.Jobs.Requests {
+			qty, err := resource.ParseQuantity(v)
+			if err != nil {
+				return fmt.Errorf("invalid jobs resource %q for %s: %w", v, k, err)
+			}
+			container.Resources.Requests[corev1.ResourceName(k)] = qty
+		}
+		for k, v := range c.cfg.Jobs.Limits {
+			qty, err := resource.ParseQuantity(v)
+			if err != nil {
+				return fmt.Errorf("invalid jobs limit %q for %s: %w", v, k, err)
+			}
+			container.Resources.Limits[corev1.ResourceName(k)] = qty
+		}
+
+		// Apply annotations from platform jobs config
+		if len(c.cfg.Jobs.Annotations) > 0 {
+			if job.Spec.Template.Annotations == nil {
+				job.Spec.Template.Annotations = make(map[string]string)
+			}
+			for k, v := range c.cfg.Jobs.Annotations {
+				job.Spec.Template.Annotations[k] = v
+			}
+		}
+
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: "GPU_VENDOR", Value: string(c.gpuVendor)},
+			corev1.EnvVar{Name: "CHECK_MODE", Value: CheckModeRDMANode},
+			corev1.EnvVar{Name: "RDMA_TYPE", Value: c.cfg.Jobs.RDMAType},
+		)
+
+		_, err := c.client.BatchV1().Jobs(c.opts.Namespace).Create(ctx, job, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create RDMA node check job for node %s: %w", nodeName, err)
+		}
+		fmt.Fprintf(c.output, "  Created RDMA node check job %s (node: %s, GPUs: %d)\n", jobName, nodeName, gpuCount)
+	}
+	return nil
+}
+
+// sanitizeNodeName converts a node name to a valid Kubernetes name suffix.
+func sanitizeNodeName(name string) string {
+	name = strings.ToLower(name)
+	name = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			return r
+		}
+		return '-'
+	}, name)
+	return strings.Trim(name, "-")
+}
+
+// waitAndCollectGpuCheckJobs polls until all GPU check Jobs have completed,
+// then reads the JSON report from each Job's pod logs.
+func (c *Controller) waitAndCollectGpuCheckJobs(ctx context.Context) ([]checks.NodeReport, error) {
+	selector := checkJobLabelKey + "=" + gpuCheckJobLabelValue
+	return c.waitAndCollectJobsBySelector(ctx, selector, "GPU check")
+}
+
+// waitAndCollectNetCheckJobs polls until all RDMA node check Jobs have completed,
+// then reads the JSON report from each Job's pod logs.
+func (c *Controller) waitAndCollectNetCheckJobs(ctx context.Context) ([]checks.NodeReport, error) {
+	selector := checkJobLabelKey + "=" + netCheckJobLabelValue
+	return c.waitAndCollectJobsBySelector(ctx, selector, "RDMA node check")
+}
+
+// waitAndCollectJobsBySelector is the generic polling loop for check Jobs.
+func (c *Controller) waitAndCollectJobsBySelector(ctx context.Context, selector, jobKind string) ([]checks.NodeReport, error) {
 	timeout := time.After(c.opts.Timeout)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	selector := labels.Set{agentLabelKey: agentLabelValue}.AsSelector().String()
+	expected := len(c.gpuNodes)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return c.collectAvailableJobs(ctx, selector, ctx.Err())
 		case <-timeout:
-			return nil, fmt.Errorf("timed out waiting for agents after %v", c.opts.Timeout)
+			return c.collectAvailableJobs(ctx, selector,
+				fmt.Errorf("timed out waiting for %s jobs after %v", jobKind, c.opts.Timeout))
 		case <-ticker.C:
-			pods, err := c.client.CoreV1().Pods(c.opts.Namespace).List(ctx, metav1.ListOptions{
+			jobs, err := c.client.BatchV1().Jobs(c.opts.Namespace).List(ctx, metav1.ListOptions{
 				LabelSelector: selector,
 			})
 			if err != nil {
 				continue
 			}
 
-			// Check annotation set by the agent when it finishes.
-			ready := 0
-			for _, pod := range pods.Items {
-				status := pod.Annotations[annotationKey]
-				if status == annotationDone || status == annotationError {
-					ready++
+			completed := 0
+			failed := 0
+			for _, j := range jobs.Items {
+				if j.Status.Succeeded > 0 {
+					completed++
+				} else if j.Status.Failed > 0 {
+					completed++
+					failed++
 				}
 			}
 
-			fmt.Fprintf(c.output, "  Workers ready: %d/%d\n", ready, len(gpuNodes))
+			fmt.Fprintf(c.output, "  %s jobs completed: %d/%d", jobKind, completed, expected)
+			if failed > 0 {
+				fmt.Fprintf(c.output, " (%d failed)", failed)
+			}
+			fmt.Fprintln(c.output)
 
-			if ready >= len(gpuNodes) {
-				return c.collectResults(ctx, pods.Items)
+			if completed >= expected {
+				return c.collectFromJobs(ctx, jobs.Items)
 			}
 		}
 	}
 }
 
-func (c *Controller) collectResults(ctx context.Context, pods []corev1.Pod) ([]checks.NodeReport, error) {
+// collectFromJobs reads the JSON report from each completed Job's pod logs.
+func (c *Controller) collectFromJobs(ctx context.Context, jobs []batchv1.Job) ([]checks.NodeReport, error) {
 	var reports []checks.NodeReport
 
-	for _, pod := range pods {
-		report, err := c.collectFromPod(ctx, pod)
+	for _, job := range jobs {
+		pods, err := c.client.CoreV1().Pods(c.opts.Namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "job-name=" + job.Name,
+		})
+		if err != nil || len(pods.Items) == 0 {
+			fmt.Fprintf(c.output, "  Warning: no pod found for job %s\n", job.Name)
+			continue
+		}
+
+		report, err := c.collectFromPod(ctx, pods.Items[0])
 		if err != nil {
 			fmt.Fprintf(c.output, "  Warning: %v\n", err)
 			continue
@@ -740,17 +1204,69 @@ func (c *Controller) collectResults(ctx context.Context, pods []corev1.Pod) ([]c
 	return reports, nil
 }
 
+// collectAvailableJobs gathers results from whatever Jobs completed before the
+// timeout or cancellation. Reports which nodes are missing and returns partial
+// results alongside the original error so the caller can still produce a report.
+func (c *Controller) collectAvailableJobs(ctx context.Context, selector string, origErr error) ([]checks.NodeReport, error) {
+	listCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	jobs, err := c.client.BatchV1().Jobs(c.opts.Namespace).List(listCtx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return nil, origErr
+	}
+
+	var completedJobs []batchv1.Job
+	for _, j := range jobs.Items {
+		if j.Status.Succeeded > 0 || j.Status.Failed > 0 {
+			completedJobs = append(completedJobs, j)
+		}
+	}
+
+	reports, _ := c.collectFromJobs(listCtx, completedJobs)
+
+	collected := make(map[string]bool)
+	for _, r := range reports {
+		collected[r.Node] = true
+	}
+	var missing []string
+	for _, node := range c.gpuNodes {
+		if !collected[node] {
+			missing = append(missing, node)
+		}
+	}
+
+	if len(missing) > 0 {
+		fmt.Fprintf(c.output, "  Collected %d/%d node(s); missing: %s\n",
+			len(reports), len(c.gpuNodes), strings.Join(missing, ", "))
+
+		for _, j := range jobs.Items {
+			if j.Status.Succeeded > 0 || j.Status.Failed > 0 {
+				continue
+			}
+			pods, podErr := c.client.CoreV1().Pods(c.opts.Namespace).List(listCtx, metav1.ListOptions{
+				LabelSelector: "job-name=" + j.Name,
+			})
+			if podErr != nil || len(pods.Items) == 0 {
+				continue
+			}
+			for _, cond := range pods.Items[0].Status.Conditions {
+				if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+					fmt.Fprintf(c.output, "  Job %s not scheduled: %s\n", j.Name, cond.Message)
+				}
+			}
+		}
+	}
+
+	return reports, origErr
+}
+
 func (c *Controller) collectFromPod(ctx context.Context, pod corev1.Pod) (*checks.NodeReport, error) {
-	// Try current logs first (agent sets "done" annotation before exiting),
-	// fall back to previous logs if the container has already restarted.
 	stream, err := c.client.CoreV1().Pods(c.opts.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).Stream(ctx)
 	if err != nil {
-		stream, err = c.client.CoreV1().Pods(c.opts.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
-			Previous: true,
-		}).Stream(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get logs from %s: %w", pod.Name, err)
-		}
+		return nil, fmt.Errorf("failed to get logs from %s: %w", pod.Name, err)
 	}
 	defer stream.Close()
 
@@ -765,13 +1281,17 @@ func parseReport(r io.Reader) (*checks.NodeReport, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
-	// Skip stderr lines until we find the start of JSON
+	// Skip stderr progress lines until we find the opening "{" of the JSON report.
+	// The agent writes JSON to stdout and progress to stderr, but container runtimes
+	// (CRI-O, containerd) merge both streams in kubectl logs. We rely on the agent
+	// NOT writing to stderr after the JSON (see cmd/agent SilenceErrors) so that
+	// json.Decoder can parse the object cleanly. Any trailing stderr text after the
+	// closing "}" is ignored by json.Decoder.
 	var jsonLines []string
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "{") {
 			jsonLines = append(jsonLines, line)
-			// Collect remaining lines (json.Decoder will stop at the right place)
 			for scanner.Scan() {
 				jsonLines = append(jsonLines, scanner.Text())
 			}
@@ -838,15 +1358,448 @@ func (c *Controller) runBandwidthJobs(ctx context.Context, gpuNodes []string, re
 	return append(results, jr...), err
 }
 
+// runPingMesh performs pairwise RDMA connectivity testing across all GPU nodes.
+func (c *Controller) runPingMesh(ctx context.Context, gpuNodes []string, netReports []checks.NodeReport) error {
+	topoMap := buildTopologyMap(netReports)
+	if len(topoMap) == 0 {
+		return fmt.Errorf("no topology data available for pingmesh")
+	}
+
+	// Determine RDMA type: primary from config, fallback from topology link layer
+	rdmaType, err := c.resolvePingMeshRDMAType(topoMap)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.output, "  RDMA type for pingmesh: %s\n", rdmaType)
+
+	gidIndex := c.cfg.Jobs.GetPingGIDIndex()
+	iterations := c.cfg.Jobs.PingIterations
+	timeout := c.cfg.Jobs.PingTimeout
+
+	// Build RDMA PodConfig (same pattern as RDMABandwidthJob)
+	rdmaCfg := &jobrunner.PodConfig{
+		ResourceRequests: make(map[string]string),
+		ResourceLimits:   make(map[string]string),
+		Annotations:      make(map[string]string),
+	}
+	for k, v := range c.cfg.Jobs.Requests {
+		rdmaCfg.ResourceRequests[k] = v
+	}
+	for k, v := range c.cfg.Jobs.Limits {
+		rdmaCfg.ResourceLimits[k] = v
+	}
+	for k, v := range c.cfg.Jobs.Annotations {
+		rdmaCfg.Annotations[k] = v
+	}
+
+	toolsImage := c.cfg.Images.GetJobImage("pingmesh")
+
+	// Build job map for all N-choose-2 pairs
+	jobMap := make(map[jobrunner.NodePair]jobrunner.Job)
+	for i := 0; i < len(gpuNodes); i++ {
+		for j := i + 1; j < len(gpuNodes); j++ {
+			nodeA, nodeB := gpuNodes[i], gpuNodes[j]
+			topoA, okA := topoMap[nodeA]
+			topoB, okB := topoMap[nodeB]
+			if !okA || !okB {
+				fmt.Fprintf(c.output, "  Warning: missing topology for %s or %s, skipping pair\n", nodeA, nodeB)
+				continue
+			}
+
+			devsA := devicesFromTopology(topoA)
+			devsB := devicesFromTopology(topoB)
+			if len(devsA) == 0 || len(devsB) == 0 {
+				fmt.Fprintf(c.output, "  Warning: no RDMA NICs for %s or %s, skipping pair\n", nodeA, nodeB)
+				continue
+			}
+
+			if len(devsA) != len(devsB) {
+				fmt.Fprintf(c.output, "  Warning: NIC count mismatch: %s has %d, %s has %d\n", nodeA, len(devsA), nodeB, len(devsB))
+			}
+
+			// Canonicalize pair to match roundRobinSchedule ordering (lex-smaller = Server)
+			serverNode, clientNode := nodeA, nodeB
+			serverDevs, clientDevs := devsA, devsB
+			if serverNode > clientNode {
+				serverNode, clientNode = clientNode, serverNode
+				serverDevs, clientDevs = clientDevs, serverDevs
+			}
+			pair := jobrunner.NodePair{Server: serverNode, Client: clientNode}
+			pmJob := rdma.NewPingMeshJob(serverNode, clientNode, serverDevs, clientDevs, rdmaType, gidIndex, iterations, timeout)
+			pmJob.SetPodConfig(rdmaCfg)
+			pmJob.SetServerImage(toolsImage)
+			pmJob.SetClientImage(toolsImage)
+			jobMap[pair] = pmJob
+		}
+	}
+
+	if len(jobMap) == 0 {
+		fmt.Fprintln(c.output, "  No valid node pairs for pingmesh")
+		return nil
+	}
+	fmt.Fprintf(c.output, "  Testing %d node pair(s)\n", len(jobMap))
+
+	runner := jobrunner.New(c.client, c.opts.Namespace, toolsImage, c.opts.Timeout, c.output, c.opts.Debug)
+	pairResults, err := runner.RunPairwise(ctx, jobMap, 3)
+	if err != nil {
+		return fmt.Errorf("pingmesh execution failed: %w", err)
+	}
+
+	// Classify results into rail/xrail and build report
+	report, failures := c.classifyPingMeshResults(pairResults, topoMap)
+	c.pingmeshReport = report
+
+	// Manage detailed failures ConfigMap: update on failure, delete on full success
+	if len(failures.Failures) > 0 {
+		if err := c.storePingMeshFailures(ctx, failures); err != nil {
+			fmt.Fprintf(c.output, "  Warning: failed to store pingmesh failures: %v\n", err)
+		}
+	} else {
+		err := c.client.CoreV1().ConfigMaps(c.opts.Namespace).Delete(ctx, pingmeshFailuresCMName, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			fmt.Fprintf(c.output, "  Warning: failed to clean up old pingmesh failures ConfigMap: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+// resolvePingMeshRDMAType determines the RDMA type from config or topology.
+func (c *Controller) resolvePingMeshRDMAType(topoMap map[string]*checks.NodeTopology) (config.RDMAType, error) {
+	if rt := config.RDMAType(c.cfg.Jobs.RDMAType); rt == config.RDMATypeIB || rt == config.RDMATypeRoCE {
+		return rt, nil
+	}
+
+	// Infer from topology link layers
+	linkLayers := make(map[checks.LinkLayer]bool)
+	for _, topo := range topoMap {
+		for _, pair := range topo.Pairs {
+			linkLayers[pair.NIC.LinkLayer] = true
+		}
+	}
+
+	switch {
+	case len(linkLayers) == 0:
+		return "", fmt.Errorf("no NIC link layer data in topology")
+	case len(linkLayers) > 1:
+		return "", fmt.Errorf("mixed link layer types detected in GPU-paired NICs; set jobs.rdma_type explicitly")
+	case linkLayers[checks.LinkLayerEthernet]:
+		return config.RDMATypeRoCE, nil
+	case linkLayers[checks.LinkLayerInfiniBand]:
+		return config.RDMATypeIB, nil
+	default:
+		return "", fmt.Errorf("unknown link layer type in topology")
+	}
+}
+
+// devicesFromTopology extracts the list of unique NIC device names from topology Pairs.
+func devicesFromTopology(topo *checks.NodeTopology) []string {
+	seen := make(map[string]bool)
+	var devs []string
+	for _, pair := range topo.Pairs {
+		if !seen[pair.NIC.Dev] {
+			devs = append(devs, pair.NIC.Dev)
+			seen[pair.NIC.Dev] = true
+		}
+	}
+	return devs
+}
+
+// classifyPingMeshResults processes RunPairwise results into the PingMeshReport
+// and PingMeshFailuresReport, classifying each NIC pair as rail or xrail.
+func (c *Controller) classifyPingMeshResults(
+	pairResults map[jobrunner.NodePair][]jobrunner.JobResult,
+	topoMap map[string]*checks.NodeTopology,
+) (*rdma.PingMeshReport, *rdma.PingMeshFailuresReport) {
+	var (
+		railPassed, railTotal   int
+		xrailPassed, xrailTotal int
+		matrix                  []rdma.PingMeshNodePair
+		allFailures             []rdma.PingMeshFailure
+		nodePairCount           int
+	)
+
+	for pair, attempts := range pairResults {
+		nodePairCount++
+		serverTopo, okS := topoMap[pair.Server]
+		clientTopo, okC := topoMap[pair.Client]
+		if !okS || !okC {
+			fmt.Fprintf(c.output, "  Warning: missing topology for %s or %s in classification, skipping pair\n", pair.Server, pair.Client)
+			continue
+		}
+
+		serverRails := buildRailMap(serverTopo)
+		clientRails := buildRailMap(clientTopo)
+
+		// Merge results across retry attempts: a NIC pair passes if it succeeded in any attempt
+		type nicPairKey struct{ src, dst string }
+		bestResult := make(map[nicPairKey]bool)
+		lastError := make(map[nicPairKey]string)
+		lastAttempt := make(map[nicPairKey]int)
+
+		for attemptIdx, jr := range attempts {
+			results, ok := jr.Details.([]rdma.PingMeshPairResult)
+			if !ok {
+				continue
+			}
+			for _, r := range results {
+				k := nicPairKey{src: r.SrcDev, dst: r.DstDev}
+				if r.Pass {
+					bestResult[k] = true
+				}
+				if !r.Pass {
+					lastError[k] = r.Error
+					lastAttempt[k] = attemptIdx + 1
+				}
+				if _, exists := bestResult[k]; !exists {
+					bestResult[k] = false
+				}
+			}
+		}
+
+		var npRail, npXRail, npAll rdma.PingMeshCount
+
+		for k, passed := range bestResult {
+			srcRail, srcOk := clientRails[k.src]
+			dstRail, dstOk := serverRails[k.dst]
+
+			isRail := srcOk && dstOk && srcRail == dstRail
+			cat := rdma.PingMeshCategoryXRail
+			if isRail {
+				cat = rdma.PingMeshCategoryRail
+			}
+
+			npAll.Total++
+			if isRail {
+				npRail.Total++
+				railTotal++
+			} else {
+				npXRail.Total++
+				xrailTotal++
+			}
+
+			if passed {
+				npAll.Passed++
+				if isRail {
+					npRail.Passed++
+					railPassed++
+				} else {
+					npXRail.Passed++
+					xrailPassed++
+				}
+			} else {
+				allFailures = append(allFailures, rdma.PingMeshFailure{
+					NodeA:    pair.Server,
+					NodeB:    pair.Client,
+					SrcDev:   k.src,
+					DstDev:   k.dst,
+					Category: cat,
+					Error:    lastError[k],
+					Attempt:  lastAttempt[k],
+				})
+			}
+		}
+
+		nodeA, nodeB := pair.Server, pair.Client
+		if nodeA > nodeB {
+			nodeA, nodeB = nodeB, nodeA
+		}
+		matrix = append(matrix, rdma.PingMeshNodePair{
+			NodeA: nodeA,
+			NodeB: nodeB,
+			Rail:  npRail,
+			XRail: npXRail,
+			All:   npAll,
+		})
+	}
+
+	report := &rdma.PingMeshReport{
+		Summary: map[string]rdma.PingMeshCheckSummary{
+			"rdma_conn_rail": {
+				Status:  pingMeshStatus(railPassed, railTotal),
+				Passed:  railPassed,
+				Total:   railTotal,
+				Message: fmt.Sprintf("Rail RDMA connectivity: %d/%d NIC pairs across %d node pairs", railPassed, railTotal, nodePairCount),
+			},
+			"rdma_conn_xrail": {
+				Status:  pingMeshStatus(xrailPassed, xrailTotal),
+				Passed:  xrailPassed,
+				Total:   xrailTotal,
+				Message: fmt.Sprintf("Cross-rail RDMA connectivity: %d/%d NIC pairs across %d node pairs", xrailPassed, xrailTotal, nodePairCount),
+			},
+		},
+		Matrix: matrix,
+	}
+
+	return report, &rdma.PingMeshFailuresReport{
+		Timestamp: time.Now().UTC(),
+		Failures:  allFailures,
+	}
+}
+
+// buildRailMap maps NIC device names to their rail index (position in topology Pairs).
+func buildRailMap(topo *checks.NodeTopology) map[string]int {
+	m := make(map[string]int)
+	if topo == nil {
+		return m
+	}
+	for i, pair := range topo.Pairs {
+		m[pair.NIC.Dev] = i
+	}
+	return m
+}
+
+// pingMeshStatus returns PASS/WARN/FAIL based on passed/total counts.
+func pingMeshStatus(passed, total int) checks.Status {
+	switch {
+	case total == 0:
+		return checks.StatusSkip
+	case passed == total:
+		return checks.StatusPass
+	case passed > 0:
+		return checks.StatusWarn
+	default:
+		return checks.StatusFail
+	}
+}
+
+// storePingMeshFailures writes the detailed failures to a separate ConfigMap.
+func (c *Controller) storePingMeshFailures(ctx context.Context, failures *rdma.PingMeshFailuresReport) error {
+	data, err := json.MarshalIndent(failures, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal pingmesh failures: %w", err)
+	}
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pingmeshFailuresCMName,
+			Namespace: c.opts.Namespace,
+			Labels:    map[string]string{"app": "rhaii-validator"},
+		},
+		Data: map[string]string{
+			"failures.json": string(data),
+		},
+	}
+
+	existing, err := c.client.CoreV1().ConfigMaps(c.opts.Namespace).Get(ctx, pingmeshFailuresCMName, metav1.GetOptions{})
+	if err == nil {
+		existing.Data = cm.Data
+		_, err = c.client.CoreV1().ConfigMaps(c.opts.Namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	} else if apierrors.IsNotFound(err) {
+		_, err = c.client.CoreV1().ConfigMaps(c.opts.Namespace).Create(ctx, cm, metav1.CreateOptions{})
+	}
+
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(c.output, "  Pingmesh failures stored in ConfigMap %s/%s\n", c.opts.Namespace, pingmeshFailuresCMName)
+	return nil
+}
+
+// mergeNodeReports combines reports from multiple phases (e.g. GPU checks and
+// RDMA node checks) into a single slice. Reports for the same node are merged
+// by appending results.
+func mergeNodeReports(reportSets ...[]checks.NodeReport) []checks.NodeReport {
+	byNode := make(map[string]*checks.NodeReport)
+	var order []string
+
+	for _, reports := range reportSets {
+		for _, r := range reports {
+			existing, ok := byNode[r.Node]
+			if !ok {
+				copy := r
+				byNode[r.Node] = &copy
+				order = append(order, r.Node)
+			} else {
+				existing.Results = append(existing.Results, r.Results...)
+			}
+		}
+	}
+
+	var merged []checks.NodeReport
+	for _, name := range order {
+		merged = append(merged, *byNode[name])
+	}
+	return merged
+}
+
+// topologyCoversAllNodes returns true if every node in gpuNodes has topology data in reports.
+func topologyCoversAllNodes(reports []checks.NodeReport, gpuNodes []string) bool {
+	topoMap := buildTopologyMap(reports)
+	for _, n := range gpuNodes {
+		if _, ok := topoMap[n]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // buildTopologyMap extracts topology from node reports, keyed by node name.
 func buildTopologyMap(reports []checks.NodeReport) map[string]*checks.NodeTopology {
 	m := make(map[string]*checks.NodeTopology)
 	for _, r := range reports {
-		if r.Topology != nil && len(r.Topology.Pairs) > 0 {
-			m[r.Node] = r.Topology
+		if topo := checks.ExtractTopology(r); topo != nil {
+			m[r.Node] = topo
 		}
 	}
 	return m
+}
+
+// loadTopologyFromReport reads topology-bearing NodeReports from the stored
+// report ConfigMap. Only nodes present in gpuNodes are returned, preserving
+// original Result status/details so WARN/FAIL aren't overwritten with PASS.
+func (c *Controller) loadTopologyFromReport(ctx context.Context, gpuNodes []string) ([]checks.NodeReport, error) {
+	cm, err := c.client.CoreV1().ConfigMaps(c.opts.Namespace).Get(ctx, reportCMName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("no stored report found (ConfigMap %s/%s): %w", c.opts.Namespace, reportCMName, err)
+	}
+
+	reportJSON, ok := cm.Data["report.json"]
+	if !ok || reportJSON == "" {
+		return nil, fmt.Errorf("stored report ConfigMap has no report.json data")
+	}
+
+	var stored struct {
+		Nodes []checks.NodeReport `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(reportJSON), &stored); err != nil {
+		return nil, fmt.Errorf("failed to parse stored report: %w", err)
+	}
+
+	nodeSet := make(map[string]bool, len(gpuNodes))
+	for _, n := range gpuNodes {
+		nodeSet[n] = true
+	}
+
+	var reports []checks.NodeReport
+	for _, r := range stored.Nodes {
+		if !nodeSet[r.Node] {
+			continue
+		}
+		if checks.ExtractTopology(r) != nil {
+			reports = append(reports, r)
+		}
+	}
+	if len(reports) == 0 {
+		return nil, fmt.Errorf("stored report has no topology data for current GPU nodes")
+	}
+
+	if len(reports) < len(gpuNodes) {
+		var missing []string
+		covered := make(map[string]bool, len(reports))
+		for _, r := range reports {
+			covered[r.Node] = true
+		}
+		for _, n := range gpuNodes {
+			if !covered[n] {
+				missing = append(missing, n)
+			}
+		}
+		return nil, fmt.Errorf("stored report has topology for %d/%d GPU nodes (missing: %s)",
+			len(reports), len(gpuNodes), strings.Join(missing, ", "))
+	}
+
+	return reports, nil
 }
 
 // expandRDMAJobs creates per-GPU-NIC RDMA jobs from topology.
@@ -913,35 +1866,59 @@ func (c *Controller) expandRDMAJobs(ctx context.Context, gpuNodes []string, topo
 		}
 		hasAllDevices := rdmaCount >= len(topo.Pairs)
 
+		// GPUDirect RDMA: request all GPUs so the NVIDIA container runtime
+		// injects CUDA libraries and --use_cuda sees correct GPU indices
+		gpuResourcesAvailable := hasAllDevices && c.gpuResource != "" && topo.GPUCount > 0 && origPodCfg != nil
+		if gpuResourcesAvailable {
+			gpuCountStr := fmt.Sprintf("%d", topo.GPUCount)
+			origPodCfg.ResourceRequests[string(c.gpuResource)] = gpuCountStr
+			origPodCfg.ResourceLimits[string(c.gpuResource)] = gpuCountStr
+		}
+
 		// Collect devices and GPU IDs for WEP
 		var devices []string
 		var gpuIDs []int
 		uniqueDevices := make(map[string]bool)
 
+		cfgQPs := c.cfg.Jobs.RDMA.QPs
+		cfgMsgSize := c.cfg.Jobs.RDMA.MessageSize
+
 		if hasAllDevices {
 			// Requesting all RDMA devices — create one PD job per GPU-NIC pair
 			for _, pair := range topo.Pairs {
-				rdmaJob := rdma.NewRDMABandwidthJob(c.cfg.Thresholds.RDMABandwidthPD.Pass, nil)
+				rdmaJob := rdma.NewRDMABandwidthJob(c.cfg.Thresholds.RDMABandwidthPD.Pass, c.cfg.Thresholds.RDMABandwidthPD.Warn, nil)
 				rdmaJob.PodCfg = origPodCfg
 				rdmaJob.ServerImage = origServerImg
 				rdmaJob.ClientImage = origClientImg
-				rdmaJob.Device = pair.NICDev
-				rdmaJob.UseCUDA = pair.GPUID
+				rdmaJob.Device = pair.NIC.Dev
+				rdmaJob.UseCUDA = pair.GPU.ID
+				if cfgQPs > 0 {
+					rdmaJob.QPs = cfgQPs
+				}
+				if cfgMsgSize > 0 {
+					rdmaJob.MessageSize = cfgMsgSize
+				}
 				jobs = append(jobs, rdmaJob)
-				fmt.Fprintf(c.output, "  RDMA PD job: GPU%d ↔ %s (NUMA%d)\n", pair.GPUID, pair.NICDev, pair.NUMAID)
+				fmt.Fprintf(c.output, "  RDMA PD job: GPU%d ↔ %s (NUMA:%d↔%d)\n", pair.GPU.ID, pair.NIC.Dev, pair.GPU.NUMA, pair.NIC.NUMA)
 
-				if !uniqueDevices[pair.NICDev] {
-					devices = append(devices, pair.NICDev)
-					gpuIDs = append(gpuIDs, pair.GPUID)
-					uniqueDevices[pair.NICDev] = true
+				if !uniqueDevices[pair.NIC.Dev] {
+					devices = append(devices, pair.NIC.Dev)
+					gpuIDs = append(gpuIDs, pair.GPU.ID)
+					uniqueDevices[pair.NIC.Dev] = true
 				}
 			}
 		} else {
 			// Requesting fewer RDMA devices — single PD job, auto-detect device
-			rdmaJob := rdma.NewRDMABandwidthJob(c.cfg.Thresholds.RDMABandwidthPD.Pass, nil)
+			rdmaJob := rdma.NewRDMABandwidthJob(c.cfg.Thresholds.RDMABandwidthPD.Pass, c.cfg.Thresholds.RDMABandwidthPD.Warn, nil)
 			rdmaJob.PodCfg = origPodCfg
 			rdmaJob.ServerImage = origServerImg
 			rdmaJob.ClientImage = origClientImg
+			if cfgQPs > 0 {
+				rdmaJob.QPs = cfgQPs
+			}
+			if cfgMsgSize > 0 {
+				rdmaJob.MessageSize = cfgMsgSize
+			}
 			// No Device or UseCUDA set — ib_write_bw auto-detects
 			jobs = append(jobs, rdmaJob)
 			fmt.Fprintf(c.output, "  RDMA PD job: auto-detect device (requesting %d RDMA resource)\n", rdmaCount)
@@ -949,10 +1926,16 @@ func (c *Controller) expandRDMAJobs(ctx context.Context, gpuNodes []string, topo
 
 		// Add WEP job if requesting all devices and multiple NICs available
 		if hasAllDevices && len(devices) > 1 {
-			wepJob := rdma.NewRDMAWEPJob(c.cfg.Thresholds.RDMABandwidthWEP.Pass, devices, gpuIDs)
+			wepJob := rdma.NewRDMAWEPJob(c.cfg.Thresholds.RDMABandwidthWEP.Pass, c.cfg.Thresholds.RDMABandwidthWEP.Warn, devices, gpuIDs)
 			wepJob.PodCfg = origPodCfg
 			wepJob.ServerImage = origServerImg
 			wepJob.ClientImage = origClientImg
+			if cfgQPs > 0 {
+				wepJob.QPs = cfgQPs
+			}
+			if cfgMsgSize > 0 {
+				wepJob.MessageSize = cfgMsgSize
+			}
 			jobs = append(jobs, wepJob)
 			fmt.Fprintf(c.output, "  RDMA WEP job: %d NICs in parallel (%s)\n", len(devices), strings.Join(devices, ", "))
 		} else {
@@ -995,6 +1978,7 @@ func (c *Controller) configureJobs(ctx context.Context, gpuNodes []string) {
 	}
 
 	for _, job := range c.jobs {
+		// Pod config: TCP jobs get only cpu/memory, RDMA jobs get everything
 		if configurable, ok := job.(jobrunner.Configurable); ok {
 			if strings.HasPrefix(job.Name(), "ib-") {
 				configurable.SetPodConfig(rdmaCfg)
@@ -1002,31 +1986,37 @@ func (c *Controller) configureJobs(ctx context.Context, gpuNodes []string) {
 				configurable.SetPodConfig(tcpCfg)
 			}
 		}
-	}
 
-	// Thresholds from platform config
-	for _, job := range c.jobs {
+		// Thresholds from platform config
 		if tc, ok := job.(jobrunner.ThresholdConfigurable); ok {
 			switch job.Name() {
 			case "iperf3-tcp":
-				tc.SetThreshold(c.cfg.Thresholds.TCPBandwidth.Pass)
+				tc.SetThreshold(c.cfg.Thresholds.TCPBandwidth.Pass, c.cfg.Thresholds.TCPBandwidth.Warn)
+			case "tcp-latency":
+				tc.SetThreshold(c.cfg.Thresholds.TCPLatency.Pass, c.cfg.Thresholds.TCPLatency.Warn)
 			case "ib-write-bw":
-				tc.SetThreshold(c.cfg.Thresholds.RDMABandwidthPD.Pass)
+				tc.SetThreshold(c.cfg.Thresholds.RDMABandwidthPD.Pass, c.cfg.Thresholds.RDMABandwidthPD.Warn)
 			}
 		}
-	}
 
-	// Container images from image config
-	for _, job := range c.jobs {
+		// Container images from image config
 		if imgConfig, ok := job.(jobrunner.ImageConfigurable); ok {
-			configKey := jobConfigKey(job.Name())
-			if configKey == "" {
-				continue
+			var jobImage string
+
+			// Special case: tcp-latency uses validator image (has built-in tcp-lat tool)
+			if job.Name() == "tcp-latency" {
+				jobImage = c.opts.Image
+			} else {
+				configKey := jobConfigKey(job.Name())
+				if configKey == "" {
+					continue
+				}
+				jobImage = c.cfg.Images.GetJobImage(configKey)
+				if jobImage == "" {
+					continue
+				}
 			}
-			jobImage := c.cfg.Images.GetJobImage(configKey)
-			if jobImage == "" {
-				continue
-			}
+
 			if imgConfig.GetServerImage() == "" {
 				if setter, ok := job.(interface{ SetServerImage(string) }); ok {
 					setter.SetServerImage(jobImage)
@@ -1050,6 +2040,8 @@ func jobConfigKey(jobName string) string {
 	switch jobName {
 	case "iperf3-tcp":
 		return "iperf3"
+	case "tcp-latency":
+		return "" // Uses validator image (built-in tcp-lat tool)
 	case "nccl-allreduce":
 		return "nccl"
 	default:
@@ -1074,7 +2066,9 @@ func (c *Controller) resolveStarNodes(gpuNodes []string) (string, []string) {
 	return serverNode, clientNodes
 }
 
-// ensureOpenShiftSCC creates a ClusterRoleBinding for the privileged SCC on OpenShift.
+// ensureOpenShiftSCC grants the privileged SCC to the service account.
+// The check Jobs need privileged access for chroot /host to work with
+// topology and RDMA checks (host device access, sysfs, ibv_devices, ibstat).
 func (c *Controller) ensureOpenShiftSCC(ctx context.Context) error {
 	crb := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1100,11 +2094,32 @@ func (c *Controller) ensureOpenShiftSCC(ctx context.Context) error {
 	return nil
 }
 
-// cleanupJobs deletes all validation jobs and waits for them to be fully removed.
-func (c *Controller) cleanupJobs(ctx context.Context) {
+// cleanupGpuCheckJobs deletes all GPU check jobs and waits for them to be fully removed.
+func (c *Controller) cleanupGpuCheckJobs(ctx context.Context) {
+	c.deleteJobsBySelector(ctx, checkJobLabelKey+"="+gpuCheckJobLabelValue)
+}
+
+// cleanupNetCheckJobs deletes all RDMA node check jobs and waits for them to be fully removed.
+func (c *Controller) cleanupNetCheckJobs(ctx context.Context) {
+	c.deleteJobsBySelector(ctx, checkJobLabelKey+"="+netCheckJobLabelValue)
+}
+
+// cleanupBandwidthJobs deletes all bandwidth jobs and waits for them to be fully removed.
+func (c *Controller) cleanupBandwidthJobs(ctx context.Context) {
+	c.deleteJobsBySelector(ctx, "app=rhaii-validate-job")
+}
+
+// cleanupPingMeshJobs deletes pingmesh jobs only. The failures ConfigMap is
+// managed by runPingMesh: updated on failure, deleted on full success.
+func (c *Controller) cleanupPingMeshJobs(ctx context.Context) {
+	c.deleteJobsBySelector(ctx, "rhaii-job-type=pingmesh")
+}
+
+// deleteJobsBySelector deletes jobs matching a label selector and waits for removal.
+func (c *Controller) deleteJobsBySelector(ctx context.Context, selector string) {
 	propagation := metav1.DeletePropagationForeground
 	jobs, err := c.client.BatchV1().Jobs(c.opts.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app=rhaii-validate-job",
+		LabelSelector: selector,
 	})
 	if err != nil || len(jobs.Items) == 0 {
 		return
@@ -1115,12 +2130,11 @@ func (c *Controller) cleanupJobs(ctx context.Context) {
 			PropagationPolicy: &propagation,
 		})
 	}
-	fmt.Fprintf(c.output, "  Deleting %d leftover job(s)...\n", len(jobs.Items))
+	fmt.Fprintf(c.output, "  Deleting %d leftover job(s) (%s)...\n", len(jobs.Items), selector)
 
-	// Wait for jobs to be fully deleted
 	for i := 0; i < 30; i++ {
 		remaining, err := c.client.BatchV1().Jobs(c.opts.Namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: "app=rhaii-validate-job",
+			LabelSelector: selector,
 		})
 		if err != nil || len(remaining.Items) == 0 {
 			return
@@ -1129,23 +2143,13 @@ func (c *Controller) cleanupJobs(ctx context.Context) {
 	}
 }
 
-// cleanupDaemonSet removes only the agent DaemonSet, preserving the ConfigMap.
-// Used at the start of a run to clean up leftover DaemonSets from previous runs
-// without destroying user-customized ConfigMaps.
-func (c *Controller) cleanupDaemonSet(ctx context.Context) error {
-	err := c.client.AppsV1().DaemonSets(c.opts.Namespace).Delete(ctx, "rhaii-validator", metav1.DeleteOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		return err
-	}
-	return nil
-}
-
-// cleanupAll removes the agent DaemonSet and RBAC resources.
+// cleanupAll removes check jobs, bandwidth jobs, and RBAC resources.
 // ConfigMap is preserved so users can edit and rerun without losing customizations.
 func (c *Controller) cleanupAll(ctx context.Context) error {
-	if err := c.cleanupDaemonSet(ctx); err != nil {
-		return err
-	}
+	c.cleanupGpuCheckJobs(ctx)
+	c.cleanupNetCheckJobs(ctx)
+	c.cleanupBandwidthJobs(ctx)
+	c.cleanupPingMeshJobs(ctx)
 
 	for _, del := range []func() error{
 		func() error {
@@ -1155,7 +2159,6 @@ func (c *Controller) cleanupAll(ctx context.Context) error {
 			return c.client.RbacV1().ClusterRoleBindings().Delete(ctx, "rhaii-validator", metav1.DeleteOptions{})
 		},
 		func() error {
-			// OpenShift SCC binding (no-op on non-OCP)
 			return c.client.RbacV1().ClusterRoleBindings().Delete(ctx, "rhaii-validator-scc", metav1.DeleteOptions{})
 		},
 		func() error {
@@ -1177,15 +2180,15 @@ func (c *Controller) printReport(reports []checks.NodeReport, jobResults []jobru
 	// Print topology if available
 	hasTopology := false
 	for _, report := range reports {
-		if report.Topology != nil && len(report.Topology.Pairs) > 0 {
+		if topo := checks.ExtractTopology(report); topo != nil && len(topo.Pairs) > 0 {
 			if !hasTopology {
 				fmt.Fprintln(c.output)
 				fmt.Fprintln(c.output, "GPU-NIC Topology:")
 				hasTopology = true
 			}
 			var pairDescs []string
-			for _, p := range report.Topology.Pairs {
-				pairDescs = append(pairDescs, fmt.Sprintf("GPU%d↔%s(NUMA%d)", p.GPUID, p.NICDev, p.NUMAID))
+			for _, p := range topo.Pairs {
+				pairDescs = append(pairDescs, fmt.Sprintf("GPU%d↔%s(NUMA:%d↔%d)", p.GPU.ID, p.NIC.Dev, p.GPU.NUMA, p.NIC.NUMA))
 			}
 			fmt.Fprintf(c.output, "  %s: %s\n", report.Node, strings.Join(pairDescs, ", "))
 		}
@@ -1193,10 +2196,18 @@ func (c *Controller) printReport(reports []checks.NodeReport, jobResults []jobru
 
 	fmt.Fprintln(c.output)
 
-	pass, warn, fail, skip := 0, 0, 0, 0
-
 	fmt.Fprintf(c.output, "%-20s %-30s %-35s %-8s %s\n", "GROUP", "CHECK", "NODE", "STATUS", "MESSAGE")
 	fmt.Fprintln(c.output, strings.Repeat("-", 130))
+
+	for _, r := range c.clusterResults {
+		fmt.Fprintf(c.output, "%-20s %-30s %-35s %-8s %s\n",
+			r.Category, r.Name, "(cluster)", r.Status, r.Message)
+
+		if r.Remediation != "" {
+			fmt.Fprintf(c.output, "%-20s %-30s %-35s %-8s Fix: %s\n",
+				"", "", "", "", r.Remediation)
+		}
+	}
 
 	for _, report := range reports {
 		for _, r := range report.Results {
@@ -1211,16 +2222,15 @@ func (c *Controller) printReport(reports []checks.NodeReport, jobResults []jobru
 				fmt.Fprintf(c.output, "%-20s %-30s %-35s %-8s Fix: %s\n",
 					"", "", "", "", r.Remediation)
 			}
+		}
+	}
 
-			switch r.Status {
-			case checks.StatusPass:
-				pass++
-			case checks.StatusWarn:
-				warn++
-			case checks.StatusFail:
-				fail++
-			case checks.StatusSkip:
-				skip++
+	// Print pingmesh connectivity results (between per-node checks and bandwidth)
+	if c.pingmeshReport != nil {
+		for _, name := range []string{"rdma_conn_rail", "rdma_conn_xrail"} {
+			if s, ok := c.pingmeshReport.Summary[name]; ok {
+				fmt.Fprintf(c.output, "%-20s %-30s %-35s %-8s %s\n",
+					"networking_rdma", name, "(cluster)", s.Status, s.Message)
 			}
 		}
 	}
@@ -1233,84 +2243,40 @@ func (c *Controller) printReport(reports []checks.NodeReport, jobResults []jobru
 		}
 		fmt.Fprintf(c.output, "%-20s %-30s %-35s %-8s %s\n",
 			"bandwidth", jr.JobName, node, jr.Status, jr.Message)
-
-		switch jr.Status {
-		case checks.StatusPass:
-			pass++
-		case checks.StatusWarn:
-			warn++
-		case checks.StatusFail:
-			fail++
-		}
 	}
+
+	pass, warn, fail, skip := countStatuses(c.clusterResults, reports, jobResults, c.pingmeshReport)
 
 	fmt.Fprintln(c.output)
 	fmt.Fprintf(c.output, "Summary: %d PASS | %d WARN | %d FAIL | %d SKIP\n", pass, warn, fail, skip)
 
 	if fail > 0 {
 		fmt.Fprintln(c.output, "Status:  NOT READY - resolve FAIL items before deploying")
-	} else if warn > 0 {
-		fmt.Fprintln(c.output, "Status:  READY (with warnings)")
 	} else {
-		fmt.Fprintln(c.output, "Status:  READY")
+		fmt.Fprintf(c.output, "Status:  %s\n", readinessStatus(fail, warn))
 	}
 
-	fmt.Fprintln(c.output)
-	fmt.Fprintln(c.output, "Report:")
-	fmt.Fprintf(c.output, "  kubectl get cm %s -n %s -o jsonpath='{.data.report\\.json}' | jq .\n", reportCMName, c.opts.Namespace)
+	if c.reportStored {
+		fmt.Fprintln(c.output)
+		fmt.Fprintln(c.output, "Report:")
+		fmt.Fprintf(c.output, "  kubectl get cm %s -n %s -o jsonpath='{.data.report\\.json}' | jq .\n", reportCMName, c.opts.Namespace)
+	}
 	fmt.Fprintln(c.output)
 
 	return fail > 0
 }
 
 func (c *Controller) printJSONReport(reports []checks.NodeReport, jobResults []jobrunner.JobResult) bool {
-	type jsonReport struct {
-		Platform   string                `json:"platform"`
-		Nodes      []checks.NodeReport   `json:"nodes"`
-		JobResults []jobrunner.JobResult  `json:"job_results,omitempty"`
-		Summary    map[string]int        `json:"summary"`
-		Status     string                `json:"status"`
-	}
-
-	pass, warn, fail, skip := 0, 0, 0, 0
-	for _, report := range reports {
-		for _, r := range report.Results {
-			switch r.Status {
-			case checks.StatusPass:
-				pass++
-			case checks.StatusWarn:
-				warn++
-			case checks.StatusFail:
-				fail++
-			case checks.StatusSkip:
-				skip++
-			}
-		}
-	}
-	for _, jr := range jobResults {
-		switch jr.Status {
-		case checks.StatusPass:
-			pass++
-		case checks.StatusWarn:
-			warn++
-		case checks.StatusFail:
-			fail++
-		}
-	}
-
-	status := "READY"
-	if fail > 0 {
-		status = "NOT READY"
-	} else if warn > 0 {
-		status = "READY (with warnings)"
-	}
+	pass, warn, fail, skip := countStatuses(c.clusterResults, reports, jobResults, c.pingmeshReport)
 
 	r := jsonReport{
-		Platform:   string(c.platform),
-		Nodes:      reports,
-		JobResults: jobResults,
-		Summary:    map[string]int{"pass": pass, "warn": warn, "fail": fail, "skip": skip},
-		Status:     status,
+		Platform:      string(c.platform),
+		ClusterChecks: c.clusterResults,
+		Nodes:         reports,
+		JobResults:    jobResults,
+		Pingmesh:      c.pingmeshReport,
+		Summary:       map[string]int{"pass": pass, "warn": warn, "fail": fail, "skip": skip},
+		Status:        readinessStatus(fail, warn),
 	}
 
 	data, _ := json.MarshalIndent(r, "", "  ")

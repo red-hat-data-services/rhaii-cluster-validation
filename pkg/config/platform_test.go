@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestGetConfig_AllPlatforms(t *testing.T) {
@@ -49,18 +51,72 @@ func TestGetConfig_AllPlatforms(t *testing.T) {
 			if cfg.Thresholds.TCPBandwidth.Pass <= 0 {
 				t.Error("TCPBandwidth.Pass must be positive")
 			}
+			if cfg.Thresholds.TCPBandwidth.Warn <= 0 {
+				t.Error("TCPBandwidth.Warn must be positive")
+			}
 			if cfg.Thresholds.RDMABandwidthPD.Pass <= 0 {
 				t.Error("RDMABandwidthPD.Pass must be positive")
 			}
+			if cfg.Thresholds.RDMABandwidthPD.Warn <= 0 {
+				t.Error("RDMABandwidthPD.Warn must be positive")
+			}
 
-			// Pass > Warn > Fail for bandwidth
+			// Pass > Warn for bandwidth (higher is better)
 			if cfg.Thresholds.TCPBandwidth.Pass <= cfg.Thresholds.TCPBandwidth.Warn {
 				t.Error("TCPBandwidth: Pass must be > Warn")
 			}
-			if cfg.Thresholds.TCPBandwidth.Warn <= cfg.Thresholds.TCPBandwidth.Fail {
-				t.Error("TCPBandwidth: Warn must be > Fail")
+			if cfg.Thresholds.RDMABandwidthPD.Pass <= cfg.Thresholds.RDMABandwidthPD.Warn {
+				t.Error("RDMABandwidthPD: Pass must be > Warn")
+			}
+
+			// Pass < Warn for latency (lower is better)
+			if cfg.Thresholds.TCPLatency.Pass >= cfg.Thresholds.TCPLatency.Warn {
+				t.Error("TCPLatency: Pass must be < Warn")
 			}
 		})
+	}
+}
+
+func TestPlatformConfigStructureConsistency(t *testing.T) {
+	var reference map[string]any
+	var referencePlatform string
+	referenceAssigned := false
+
+	for platform, filename := range platformFileMap {
+		data, err := platformFS.ReadFile(filename)
+		if err != nil {
+			t.Fatalf("%s: failed to read: %v", platform, err)
+		}
+
+		var raw map[string]any
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			t.Fatalf("%s: failed to parse: %v", platform, err)
+		}
+
+		if !referenceAssigned {
+			reference = raw
+			referencePlatform = string(platform)
+			referenceAssigned = true
+			continue
+		}
+
+		for key := range raw {
+			if key == "platform" {
+				continue
+			}
+			if _, ok := reference[key]; !ok {
+				t.Errorf("%s has key %q missing from %s", platform, key, referencePlatform)
+			}
+		}
+
+		for key := range reference {
+			if key == "platform" {
+				continue
+			}
+			if _, ok := raw[key]; !ok {
+				t.Errorf("%s missing key %q (present in %s)", platform, key, referencePlatform)
+			}
+		}
 	}
 }
 
@@ -144,5 +200,67 @@ func TestResourceConfig_WithRDMA(t *testing.T) {
 	// CPU only in requests, not limits
 	if _, ok := rc.Limits["cpu"]; ok {
 		t.Error("CPU should not be in limits")
+	}
+}
+
+func TestValidate_ThresholdSemantics(t *testing.T) {
+	tests := []struct {
+		name      string
+		modify    func(*PlatformConfig)
+		wantError bool
+	}{
+		{
+			name:      "valid config",
+			modify:    func(c *PlatformConfig) {},
+			wantError: false,
+		},
+		{
+			name: "invalid tcp bandwidth: pass <= warn",
+			modify: func(c *PlatformConfig) {
+				c.Thresholds.TCPBandwidth.Pass = 5.0
+				c.Thresholds.TCPBandwidth.Warn = 10.0
+			},
+			wantError: true,
+		},
+		{
+			name: "invalid tcp latency: pass >= warn",
+			modify: func(c *PlatformConfig) {
+				c.Thresholds.TCPLatency.Pass = 2.0
+				c.Thresholds.TCPLatency.Warn = 1.0
+			},
+			wantError: true,
+		},
+		{
+			name: "invalid rdma bandwidth pd: pass <= warn",
+			modify: func(c *PlatformConfig) {
+				c.Thresholds.RDMABandwidthPD.Pass = 100.0
+				c.Thresholds.RDMABandwidthPD.Warn = 200.0
+			},
+			wantError: true,
+		},
+		{
+			name: "invalid rdma bandwidth wep: pass <= warn",
+			modify: func(c *PlatformConfig) {
+				c.Thresholds.RDMABandwidthWEP.Pass = 200.0
+				c.Thresholds.RDMABandwidthWEP.Warn = 300.0
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := GetConfig(PlatformOCP)
+			if err != nil {
+				t.Fatalf("GetConfig failed: %v", err)
+			}
+
+			tt.modify(&cfg)
+
+			err = cfg.Validate()
+			if (err != nil) != tt.wantError {
+				t.Errorf("Validate() error = %v, wantError = %v", err, tt.wantError)
+			}
+		})
 	}
 }

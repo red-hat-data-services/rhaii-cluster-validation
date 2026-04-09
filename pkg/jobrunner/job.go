@@ -39,6 +39,7 @@ type PodConfig struct {
 	ResourceRequests map[string]string `json:"resourceRequests,omitempty" yaml:"resourceRequests,omitempty"`
 	ResourceLimits   map[string]string `json:"resourceLimits,omitempty" yaml:"resourceLimits,omitempty"`
 	Privileged       bool             `json:"privileged,omitempty" yaml:"privileged,omitempty"`
+	NameSuffix       string           `json:"-" yaml:"-"` // appended to job name for uniqueness (e.g. round/attempt)
 }
 
 // ToResourceRequirements converts PodConfig resource maps to K8s ResourceRequirements.
@@ -67,14 +68,20 @@ func (pc *PodConfig) ToResourceRequirements() (corev1.ResourceRequirements, erro
 	return reqs, nil
 }
 
-// ThresholdConfigurable is an optional interface for jobs that accept a threshold.
+// ThresholdConfigurable is an optional interface for jobs that accept pass/warn thresholds.
 type ThresholdConfigurable interface {
-	SetThreshold(float64)
+	SetThreshold(pass, warn float64)
 }
 
 // Configurable is an optional interface for jobs that accept a PodConfig.
 type Configurable interface {
 	SetPodConfig(cfg *PodConfig)
+}
+
+// NameSuffixable is an optional interface for jobs that support unique name suffixes.
+// Used by RunPairwise to avoid Job name collisions across rounds/attempts in --debug mode.
+type NameSuffixable interface {
+	SetNameSuffix(suffix string)
 }
 
 // ImageConfigurable is an optional interface for jobs that use custom container images.

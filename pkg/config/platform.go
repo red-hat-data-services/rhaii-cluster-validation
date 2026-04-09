@@ -29,15 +29,92 @@ type PlatformConfig struct {
 	Agent      ResourceConfig `yaml:"agent" json:"agent"`
 	Jobs       ResourceConfig `yaml:"jobs" json:"jobs"`
 	GPU        GPUConfig      `yaml:"gpu" json:"gpu"`
+	CRDs       CRDConfig      `yaml:"crds" json:"crds"`
+	Operators  OperatorConfig `yaml:"operators" json:"operators"`
 	Thresholds ThresholdConfig `yaml:"thresholds" json:"thresholds"`
 	Images     ImageConfig    `yaml:"images" json:"images"`
 }
 
+// CRDConfig holds minimum version requirements for required CRDs.
+type CRDConfig struct {
+	// Map of CRD name to minimum required API version.
+	// Empty string means any version is accepted.
+	MinAPIVersions map[string]string `yaml:"min_api_versions,omitempty" json:"min_api_versions,omitempty"`
+	// Map of CRD name to minimum required release version (semver).
+	// Empty string means report only, don't enforce.
+	MinReleaseVersions map[string]string `yaml:"min_release_versions,omitempty" json:"min_release_versions,omitempty"`
+}
+
+// OperatorConfig holds platform-specific namespace overrides for operator health checks.
+type OperatorConfig struct {
+	// Map of operator name (e.g. "cert-manager", "istio", "lws") to namespaces to check.
+	Namespaces map[string][]string `yaml:"namespaces,omitempty" json:"namespaces,omitempty"`
+}
+
 // ResourceConfig holds resource requests, limits, and annotations for pods.
 type ResourceConfig struct {
-	Requests    map[string]string `yaml:"requests,omitempty" json:"requests,omitempty"`
-	Limits      map[string]string `yaml:"limits,omitempty" json:"limits,omitempty"`
-	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
+	Requests       map[string]string `yaml:"requests,omitempty" json:"requests,omitempty"`
+	Limits         map[string]string `yaml:"limits,omitempty" json:"limits,omitempty"`
+	Annotations    map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
+	RDMAType       string            `yaml:"rdma_type,omitempty" json:"rdma_type,omitempty"`
+	RDMA           RDMAJobConfig     `yaml:"rdma,omitempty" json:"rdma,omitempty"`
+	PingIterations int               `yaml:"ping_iterations,omitempty" json:"ping_iterations,omitempty"`
+	PingTimeout    int               `yaml:"ping_timeout,omitempty" json:"ping_timeout,omitempty"`
+	PingGIDIndex   *int              `yaml:"ping_gid_index,omitempty" json:"ping_gid_index,omitempty"` // nil = auto-discover from sysfs; 0+ = fixed index
+}
+
+// GetPingGIDIndex returns the configured GID index, or -1 for auto-discover.
+func (c *ResourceConfig) GetPingGIDIndex() int {
+	if c.PingGIDIndex != nil {
+		return *c.PingGIDIndex
+	}
+	return -1
+}
+
+// RDMAType identifies the RDMA fabric type for NIC filtering.
+type RDMAType string
+
+const (
+	RDMATypeIB   RDMAType = "ib"
+	RDMATypeRoCE RDMAType = "roce"
+)
+
+// RDMAJobConfig holds ib_write_bw test parameters.
+// Zero values mean "use defaults" (QPs=4, MessageSize=1MiB).
+type RDMAJobConfig struct {
+	QPs         int `yaml:"qps,omitempty" json:"qps,omitempty"`         // Number of queue pairs
+	MessageSize int `yaml:"message_size,omitempty" json:"message_size,omitempty"` // Message size in bytes
+}
+
+// Validate checks that user-provided config values are well-formed.
+func (c PlatformConfig) Validate() error {
+	if rt := RDMAType(c.Jobs.RDMAType); rt != "" && rt != RDMATypeIB && rt != RDMATypeRoCE {
+		return fmt.Errorf("invalid jobs.rdma_type %q: must be %q, %q, or empty", c.Jobs.RDMAType, RDMATypeIB, RDMATypeRoCE)
+	}
+	if c.Jobs.RDMA.QPs < 0 {
+		return fmt.Errorf("invalid jobs.rdma.qps %d: must be >= 0", c.Jobs.RDMA.QPs)
+	}
+	if c.Jobs.RDMA.MessageSize < 0 {
+		return fmt.Errorf("invalid jobs.rdma.message_size %d: must be >= 0", c.Jobs.RDMA.MessageSize)
+	}
+
+	// Validate bandwidth thresholds (higher is better: Pass > Warn)
+	if c.Thresholds.TCPBandwidth.Pass <= c.Thresholds.TCPBandwidth.Warn {
+		return fmt.Errorf("invalid tcp_bandwidth_gbps thresholds: pass (%.1f) must be > warn (%.1f)", c.Thresholds.TCPBandwidth.Pass, c.Thresholds.TCPBandwidth.Warn)
+	}
+	if c.Thresholds.RDMABandwidthPD.Pass <= c.Thresholds.RDMABandwidthPD.Warn {
+		return fmt.Errorf("invalid rdma_bandwidth_pd_gbps thresholds: pass (%.1f) must be > warn (%.1f)", c.Thresholds.RDMABandwidthPD.Pass, c.Thresholds.RDMABandwidthPD.Warn)
+	}
+	if c.Thresholds.RDMABandwidthWEP.Pass <= c.Thresholds.RDMABandwidthWEP.Warn {
+		return fmt.Errorf("invalid rdma_bandwidth_wep_gbps thresholds: pass (%.1f) must be > warn (%.1f)", c.Thresholds.RDMABandwidthWEP.Pass, c.Thresholds.RDMABandwidthWEP.Warn)
+	}
+
+	// Validate latency thresholds (lower is better: Pass < Warn)
+	if c.Thresholds.TCPLatency.Pass >= c.Thresholds.TCPLatency.Warn {
+		return fmt.Errorf("invalid tcp_latency_ms thresholds: pass (%.2f) must be < warn (%.2f)", c.Thresholds.TCPLatency.Pass, c.Thresholds.TCPLatency.Warn)
+	}
+
+	return nil
 }
 
 // GPUVendor represents the GPU hardware vendor.
@@ -59,15 +136,23 @@ type GPUConfig struct {
 // ThresholdConfig holds network performance thresholds.
 type ThresholdConfig struct {
 	TCPBandwidth     BandwidthThreshold `yaml:"tcp_bandwidth_gbps" json:"tcp_bandwidth_gbps"`
+	TCPLatency       LatencyThreshold   `yaml:"tcp_latency_ms" json:"tcp_latency_ms"`
 	RDMABandwidthPD  BandwidthThreshold `yaml:"rdma_bandwidth_pd_gbps" json:"rdma_bandwidth_pd_gbps"`
 	RDMABandwidthWEP BandwidthThreshold `yaml:"rdma_bandwidth_wep_gbps" json:"rdma_bandwidth_wep_gbps"`
 }
 
-// BandwidthThreshold defines pass/warn/fail thresholds for bandwidth.
+// BandwidthThreshold defines pass/warn thresholds for bandwidth (higher is better).
+// >= Pass = PASS, >= Warn = WARN, < Warn = FAIL
 type BandwidthThreshold struct {
 	Pass float64 `yaml:"pass" json:"pass"`
 	Warn float64 `yaml:"warn" json:"warn"`
-	Fail float64 `yaml:"fail" json:"fail"`
+}
+
+// LatencyThreshold defines pass/warn thresholds for latency (lower is better).
+// <= Pass = PASS, <= Warn = WARN, > Warn = FAIL
+type LatencyThreshold struct {
+	Pass float64 `yaml:"pass" json:"pass"`
+	Warn float64 `yaml:"warn" json:"warn"`
 }
 
 
@@ -83,9 +168,10 @@ type ImageConfig struct {
 
 // JobImages maps job types to their container images.
 type JobImages struct {
-	Iperf3 string `yaml:"iperf3,omitempty" json:"iperf3,omitempty"`
-	RDMA   string `yaml:"rdma,omitempty" json:"rdma,omitempty"`
-	NCCL   string `yaml:"nccl,omitempty" json:"nccl,omitempty"`
+	Iperf3   string `yaml:"iperf3,omitempty" json:"iperf3,omitempty"`
+	RDMA     string `yaml:"rdma,omitempty" json:"rdma,omitempty"`
+	NCCL     string `yaml:"nccl,omitempty" json:"nccl,omitempty"`
+	Pingmesh string `yaml:"pingmesh,omitempty" json:"pingmesh,omitempty"`
 }
 
 // GetJobImage returns the appropriate image for a job type, falling back to default.
@@ -98,6 +184,8 @@ func (ic *ImageConfig) GetJobImage(jobType string) string {
 		jobImage = ic.Jobs.RDMA
 	case "nccl":
 		jobImage = ic.Jobs.NCCL
+	case "pingmesh":
+		jobImage = ic.Jobs.Pingmesh
 	}
 
 	// If job-specific image is empty, use default

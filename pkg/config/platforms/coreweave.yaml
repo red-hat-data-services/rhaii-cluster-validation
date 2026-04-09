@@ -10,24 +10,48 @@ jobs:
   requests:
     cpu: "500m"
     memory: "512Mi"
-    rdma/ib: "8"
+    rdma/ib: "1"      # Boolean flag, not a count.
   limits:
-    rdma/ib: "8"
+    rdma/ib: "1"      # Boolean flag, not a count.
   annotations: {}
+  rdma_type: ib
 
 gpu:
   min_driver_version: "535.0"
 
+crds:
+  min_api_versions:
+    # Minimum API version required for each CRD (empty = any version)
+    gateways.gateway.networking.k8s.io: ""
+    httproutes.gateway.networking.k8s.io: ""
+    inferencepools.inference.networking.x-k8s.io: ""
+    leaderworkersets.leaderworkerset.x-k8s.io: ""
+    certificates.cert-manager.io: ""
+  min_release_versions:
+    # Minimum release version for each CRD (empty = report only)
+    gateways.gateway.networking.k8s.io: ""
+    httproutes.gateway.networking.k8s.io: ""
+    inferencepools.inference.networking.x-k8s.io: ""
+
+operators:
+  namespaces:
+    cert-manager:
+      - cert-manager
+    istio:
+      - istio-system
+    lws:
+      - openshift-lws-operator
+
 thresholds:
   tcp_bandwidth_gbps:
-    pass: 25
-    warn: 10
-    fail: 5
+    pass: 5
+    warn: 1
+  tcp_latency_ms:
+    pass: 0.5
+    warn: 1.0
   rdma_bandwidth_pd_gbps:
     pass: 180
     warn: 100
-    fail: 50
   rdma_bandwidth_wep_gbps:
     pass: 350
     warn: 200
-    fail: 100

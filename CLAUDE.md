@@ -5,18 +5,22 @@
 kubectl plugin for validating GPU cluster readiness for AI/ML workloads. Checks GPU hardware, RDMA networking, and cross-node bandwidth.
 
 **Tier 1 (API checks)** will live in [odh-cli](https://github.com/opendatahub-io/odh-cli) (`kubectl odh validate`) — integration planned.
-**Tier 2 (hardware checks)** live here — runs on GPU nodes via privileged DaemonSet.
+**Tier 2 (hardware checks)** live here — runs on GPU nodes via privileged per-node Jobs.
 
 **Epic:** INFERENG-4707
 
 ## CLI
 
 ```bash
-kubectl rhaii-validate gpu            # GPU hardware checks (driver, ECC)
-kubectl rhaii-validate networking     # Network bandwidth tests (iperf3, RDMA)
-kubectl rhaii-validate all            # Everything
-kubectl rhaii-validate deps           # Check operators/CRDs (future)
-kubectl rhaii-validate clean          # Remove all validation resources
+kubectl rhaii-validate gpu              # GPU hardware checks (driver, ECC)
+kubectl rhaii-validate network          # TCP bandwidth + latency tests (iperf3, tcp-lat)
+kubectl rhaii-validate rdma             # All RDMA: rdma-node + rdma-ping + rdma-bandwidth
+kubectl rhaii-validate rdma-node        # Per-node RDMA checks (devices, status, topology)
+kubectl rhaii-validate rdma-ping        # RDMA connectivity mesh (ibv_rc_pingpong)
+kubectl rhaii-validate rdma-bandwidth   # RDMA bandwidth tests (ib_write_bw)
+kubectl rhaii-validate deps             # Check operators/CRDs
+kubectl rhaii-validate all              # Everything (deps + gpu + network + rdma)
+kubectl rhaii-validate clean            # Remove all validation resources
 kubectl rhaii-validate --version
 
 # Flags
@@ -25,6 +29,7 @@ kubectl rhaii-validate --version
 --image <img>                          # Override baked-in container image
 --server-node <node>                   # Star topology (1 server, N clients)
 --namespace <ns>                       # Custom namespace (default: rhaii-validation)
+--nodes <n1,n2>                        # Specific nodes (default: all GPU nodes)
 ```
 
 ## Architecture
@@ -35,7 +40,7 @@ kubectl rhaii-validate all
     +-- Auto-detects GPU vendor (NVIDIA/AMD) from node labels or allocatable
     +-- Auto-detects platform (AKS/EKS/CoreWeave/OCP)
     +-- Creates namespace + RBAC (+ OpenShift SCC if OCP)
-    +-- Deploys DaemonSet (host root mounted at /host)
+    +-- Deploys per-node Jobs (host root mounted at /host)
     |       |
     |       +-- Per-node checks via chroot /host:
     |       |       +-- GPU driver (nvidia-smi / rocm-smi)
@@ -46,32 +51,42 @@ kubectl rhaii-validate all
     |       |
     +-- Collects JSON results from pod logs
     |
-    +-- Multi-node bandwidth jobs (ring topology):
-    |       +-- iperf3: TCP bandwidth per node pair
-    |       +-- ib_write_bw: RDMA per GPU-NIC pair (from topology)
+    +-- RDMA connectivity mesh (rdma-ping, pairwise topology):
+    |       +-- ibv_rc_pingpong: per-NIC-pair connectivity (tools image)
+    |       +-- Rail (same rail index) + cross-rail (different rail index)
+    |       +-- RoCEv2: auto-discovers GID index from sysfs
+    |       +-- InfiniBand: no GID needed
+    |       +-- 3 retries per node pair, controller-managed
+    |       +-- Ports: 18515 + N (one per NIC pair per node pair)
+    |
+    +-- Multi-node network test jobs (ring topology):
+    |       +-- iperf3: TCP bandwidth per node pair (tools image)
+    |       +-- tcp-lat: TCP latency per node pair (validator image, built-in)
+    |       +-- ib_write_bw: RDMA per GPU-NIC pair (from topology, tools image)
     |       +-- RDMA skipped if no RDMA resource configured
-    |       +-- Jobs use image from manifests/image-references/jobs.yaml
+    |       +-- Jobs use images: tools for iperf3/RDMA, validator for tcp-lat
     |
     +-- Stores JSON report in ConfigMap (persists after cleanup)
     +-- Prints table report with topology
-    +-- Cleans up (DaemonSet + RBAC, ConfigMap + report preserved)
+    +-- Cleans up (Jobs + RBAC, ConfigMap + report preserved)
 ```
 
 ## Two Workload Types
 
-| | DaemonSet (per-node) | Jobs (multi-node) |
+| | Per-node Jobs (hardware checks) | Multi-node Jobs (network tests) |
 |---|---|---|
-| Purpose | Hardware checks | Bandwidth tests |
-| Image | rhaii-validator (your build) | llm-d-rdma-tools-dev (from jobs.yaml) |
+| Purpose | Hardware checks | Network tests (bandwidth + latency) |
+| Image | rhaii-validator | tools (iperf3/RDMA), validator (tcp-lat) |
 | GPU request | None (privileged + chroot) | 1 per pod (auto-detected) |
 | Host access | chroot /host | None (self-contained image) |
-| Checks | `gpu` or `all` mode | `networking` or `all` mode |
+| Checks | `gpu` or `all` mode | `network` / `rdma` or `all` mode |
+| Tools | nvidia-smi, rocm-smi, ibv_devices | iperf3, ib_write_bw, ibv_rc_pingpong, tcp-lat |
 
 ## Project Structure
 
 ```
 rhaii-cluster-validation/
-├── cmd/agent/main.go              # CLI: gpu, networking, all, deps, clean, run (hidden)
+├── cmd/agent/main.go              # CLI: gpu, network, rdma, rdma-node, rdma-ping, rdma-bandwidth, all, deps, clean, run (hidden)
 ├── pkg/
 │   ├── checks/
 │   │   ├── check.go               # Check interface, Result, NodeTopology, NodeReport
@@ -84,22 +99,25 @@ rhaii-cluster-validation/
 │   │   ├── rdma/
 │   │   │   ├── devices.go         # RDMA device discovery (ibv_devices/sysfs)
 │   │   │   ├── status.go          # RDMA NIC status (ibstat/sysfs)
-│   │   │   └── rdmabw_job.go      # ib_write_bw job (-d device --use_cuda gpu)
+│   │   │   ├── rdmabw_job.go      # ib_write_bw job (-d device --use_cuda gpu)
+│   │   │   ├── pingmesh_job.go    # ibv_rc_pingpong pairwise connectivity job
+│   │   │   └── pingmesh_types.go  # Pingmesh report/result types
 │   │   └── networking/
-│   │       └── iperf_job.go       # iperf3 TCP bandwidth job
+│   │       ├── iperf_job.go       # iperf3 TCP bandwidth job (tools image)
+│   │       └── tcplat_job.go      # TCP latency job (uses built-in tcp-lat tool)
 │   ├── config/
 │   │   ├── platform.go            # PlatformConfig, GPUVendor, ResourceConfig
 │   │   ├── detect.go              # Platform auto-detection (all nodes scanned)
 │   │   ├── loader.go              # Load embedded + override config
 │   │   └── platforms/*.yaml       # Per-platform configs
 │   ├── controller/controller.go   # Orchestration: deploy, collect, topology, jobs, cleanup
-│   ├── jobrunner/                 # Multi-node job framework (ring/star, debug, scheduling errors)
+│   ├── jobrunner/                 # Multi-node job framework (ring/star/pairwise, debug, scheduling)
 │   └── runner/                    # Per-node check execution
 ├── manifests/image-references/
 │   ├── jobs.yaml                  # Job container images (embedded via //go:embed)
 │   └── embed.go
 ├── deploy/
-│   ├── daemonset.yaml             # DaemonSet template (host root at /host, hostPID)
+│   ├── node-check-job.yaml        # Per-node Job template (host root at /host, hostPID)
 │   └── rbac.yaml                  # RBAC (SCC added dynamically for OCP)
 ├── Dockerfile                     # UBI9 + util-linux (chroot)
 └── Makefile
@@ -135,14 +153,20 @@ gpu:
   min_driver_version: "535.0"
 
 thresholds:
-  tcp_bandwidth_gbps:
-    pass: 25
-    warn: 10
-    fail: 5
+  tcp_bandwidth_gbps:  # Higher is better: >= pass = PASS, >= warn = WARN, < warn = FAIL
+    pass: 5
+    warn: 1
+  tcp_latency_ms:      # Lower is better: <= pass = PASS, <= warn = WARN, > warn = FAIL
+    pass: 0.5
+    warn: 1.0
   rdma_bandwidth_pd_gbps:
     pass: 180
     warn: 100
-    fail: 50
+
+# Pingmesh (RDMA connectivity) config:
+#   ping_iterations: 1          # ibv_rc_pingpong -n iterations
+#   ping_timeout: 10            # per-test timeout in seconds
+#   ping_gid_index: 3           # RoCE GID index (omit for auto-discovery)
 ```
 
 ## Auto-Detection
@@ -171,10 +195,37 @@ Defined in `manifests/image-references/jobs.yaml`, embedded at build time:
 images:
   default: "ghcr.io/llm-d/llm-d-rdma-tools-dev:latest"
   jobs:
-    iperf3: ""   # uses default
+    iperf3: ""   # uses default (includes iperf3)
     rdma: ""     # uses default
     nccl: ""     # uses default
 ```
+
+**NOTE:** The `iperf3` image is used for iperf3 jobs. The TCP latency test uses the validator image with built-in `tcp-lat` tool (no external dependencies).
+
+## Pingmesh (RDMA Connectivity)
+
+`rdma-ping` tests RDMA data-plane connectivity between all GPU nodes using `ibv_rc_pingpong`.
+It requires topology from a prior `rdma-node` run (stored in the report ConfigMap).
+
+**How it works:**
+- Uses N-choose-2 pairwise scheduling (round-robin tournament) for all GPU node pairs
+- Disjoint pairs run in parallel within each round
+- Each pair tests every NIC-to-NIC combination (e.g., 8×8 = 64 tests per pair)
+- 3 retry attempts per pair (controller-managed: redeploy server + client)
+- Port range: `18515 + N` where N = NIC pair index (e.g., 18515–18578 for 8 NICs)
+
+**Rail vs Cross-rail:**
+- **Rail** (`rdma_conn_rail`): NIC pairs at the same rail index (e.g., GPU0↔NIC0 on both nodes). These share the same spine switch in a rail-optimized fabric.
+- **Cross-rail** (`rdma_conn_xrail`): NIC pairs at different rail indices. Tests connectivity across fabric spines. Clusters with rail-only connectivity will PASS rail but FAIL/SKIP xrail.
+
+**RoCEv2 vs InfiniBand:**
+- RoCE: auto-discovers GID index from sysfs (prefers IPv4-mapped RoCE v2 GIDs); configurable via `ping_gid_index`
+- IB: no GID needed, uses LID-based addressing natively
+
+**Reports:**
+- Summary in main report ConfigMap (`rhaii-validate-report`): `rdma_conn_rail` and `rdma_conn_xrail` status
+- Detailed failures in separate ConfigMap (`rhaii-validate-pingmesh-failures`)
+- Report merging: `rdma-ping` preserves topology/bandwidth data from previous runs
 
 ## Report Storage
 
@@ -205,11 +256,11 @@ make test               # Run unit tests
 - GPU/RDMA tools run on host via `chroot /host`
 - GPU vendor auto-detected, not configured
 - RDMA resource manually configured in `jobs.resources`
-- Jobs implement optional interfaces: `Configurable`, `ThresholdConfigurable`, `ImageConfigurable`
+- Jobs implement optional interfaces: `Configurable`, `ThresholdConfigurable`, `ImageConfigurable`, `NameSuffixable`
 - `apierrors.IsNotFound()` for K8s errors (not string matching)
 - Deploy manifests embedded via `//go:embed`
 - Binary name `rhaii-validator`, kubectl plugin name `kubectl-rhaii_validate`
-- `run` subcommand is hidden (internal, used by DaemonSet)
+- `run` subcommand is hidden (internal, used by per-node Jobs)
 
 ## Known TODOs
 
