@@ -1,0 +1,68 @@
+---
+lockfileVersion: 1
+lockfileVendor: redhat
+arches:
+- arch: aarch64
+  packages:
+  - url: https://cdn.redhat.com/content/eus/rhel9/9.6/aarch64/appstream/os/Packages/p/pciutils-devel-3.7.0-7.el9.aarch64.rpm
+    repoid: rhel-9-for-aarch64-appstream-eus-rpms
+    size: 34360
+    checksum: sha256:ef24417cb156252f03618c7427548d4f4ff36801c553f865757a9b11287b5929
+    name: pciutils-devel
+    evr: 3.7.0-7.el9
+    sourcerpm: pciutils-3.7.0-7.el9.src.rpm
+  - url: https://cdn.redhat.com/content/eus/rhel9/9.6/aarch64/appstream/os/Packages/r/rdma-core-devel-54.0-2.el9_6.aarch64.rpm
+    repoid: rhel-9-for-aarch64-appstream-eus-rpms
+    size: 487603
+    checksum: sha256:24fedc293b81582ab54c227c0e6cbaab28fb1fd5335131d6fd7d03d8b1896169
+    name: rdma-core-devel
+    evr: 54.0-2.el9_6
+    sourcerpm: rdma-core-54.0-2.el9_6.src.rpm
+  - url: https://cdn.redhat.com/content/eus/rhel9/9.6/aarch64/appstream/os/Packages/z/zlib-devel-1.2.11-40.el9.aarch64.rpm
+    repoid: rhel-9-for-aarch64-appstream-eus-rpms
+    size: 47965
+    checksum: sha256:ec1e974313c06f71a11a0732b9b08ef588e3cc58bd7ee0c02df792a1b196f60b
+    name: zlib-devel
+    evr: 1.2.11-40.el9
+    sourcerpm: zlib-1.2.11-40.el9.src.rpm
+  - url: https://cdn.redhat.com/content/eus/rhel9/9.6/aarch64/baseos/os/Packages/d/diffutils-3.7-12.el9.aarch64.rpm
+    repoid: rhel-9-for-aarch64-baseos-eus-rpms
+    size: 405687
+    checksum: sha256:524412f7ce56095508190116cb8ae141737857e4447979330c3cf75ca7017e6b
+    name: diffutils
+    evr: 3.7-12.el9
+    sourcerpm: diffutils-3.7-12.el9.src.rpm
+  source: []
+  module_metadata: []
+- arch: x86_64
+  packages:
+  - url: https://cdn.redhat.com/content/eus/rhel9/9.6/x86_64/appstream/os/Packages/p/pciutils-devel-3.7.0-7.el9.x86_64.rpm
+    repoid: rhel-9-for-x86_64-appstream-eus-rpms
+    size: 34415
+    checksum: sha256:fe63b4d532a4c7890f1f9e5fb2f6434399213a726ec5b9e4bae097fbb254f721
+    name: pciutils-devel
+    evr: 3.7.0-7.el9
+    sourcerpm: pciutils-3.7.0-7.el9.src.rpm
+  - url: https://cdn.redhat.com/content/eus/rhel9/9.6/x86_64/appstream/os/Packages/r/rdma-core-devel-54.0-2.el9_6.x86_64.rpm
+    repoid: rhel-9-for-x86_64-appstream-eus-rpms
+    size: 487638
+    checksum: sha256:ca61e72bf5b8e31e2fd92d766fe1269deb947f6f62667841bfe74dda95e10eef
+    name: rdma-core-devel
+    evr: 54.0-2.el9_6
+    sourcerpm: rdma-core-54.0-2.el9_6.src.rpm
+  - url: https://cdn.redhat.com/content/eus/rhel9/9.6/x86_64/appstream/os/Packages/z/zlib-devel-1.2.11-40.el9.x86_64.rpm
+    repoid: rhel-9-for-x86_64-appstream-eus-rpms
+    size: 48017
+    checksum: sha256:9775022716a2b6dd51d151a40aa4a6bcb466edeb01b747f48072703e509be097
+    name: zlib-devel
+    evr: 1.2.11-40.el9
+    sourcerpm: zlib-1.2.11-40.el9.src.rpm
+  - url: https://cdn.redhat.com/content/eus/rhel9/9.6/x86_64/baseos/os/Packages/d/diffutils-3.7-12.el9.x86_64.rpm
+    repoid: rhel-9-for-x86_64-baseos-eus-rpms
+    size: 411559
+    checksum: sha256:2d4c4fdfc10215af3c957c24995b79a26e27e6d76de4ed1f5198d25bf7ef9671
+    name: diffutils
+    evr: 3.7-12.el9
+    sourcerpm: diffutils-3.7-12.el9.src.rpm
+  source: []
+  module_metadata: []
