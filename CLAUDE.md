@@ -193,7 +193,7 @@ Defined in `manifests/image-references/jobs.yaml`, embedded at build time:
 
 ```yaml
 images:
-  default: "ghcr.io/llm-d/llm-d-rdma-tools-dev:latest"
+  default: "quay.io/opendatahub/odh-rhaii-validator-tools:latest"
   jobs:
     iperf3: ""   # uses default (includes iperf3)
     rdma: ""     # uses default
