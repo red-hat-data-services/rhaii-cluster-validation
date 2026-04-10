@@ -1,0 +1,24 @@
+contentOrigin:
+  repofiles:
+    - ../../rpm-repos/redhat.repo
+
+packages:
+  # Builder stage (build dependencies for perftest)
+  - gcc
+  - gcc-c++
+  - make
+  - diffutils
+  - pciutils-devel
+  - rdma-core-devel
+  - libibverbs-devel
+  - librdmacm-devel
+  - libibumad-devel
+
+arches:
+  - x86_64
+  - aarch64
+
+context:
+  containerfile:
+    file: ../../Dockerfile.konflux.validator.tools
+    stageName: builder
