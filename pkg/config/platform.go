@@ -4,7 +4,6 @@ import (
 	"embed"
 	"fmt"
 
-	imagereferences "github.com/opendatahub-io/rhaii-cluster-validation/manifests/image-references"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,7 +31,6 @@ type PlatformConfig struct {
 	CRDs       CRDConfig      `yaml:"crds" json:"crds"`
 	Operators  OperatorConfig `yaml:"operators" json:"operators"`
 	Thresholds ThresholdConfig `yaml:"thresholds" json:"thresholds"`
-	Images     ImageConfig    `yaml:"images" json:"images"`
 }
 
 // CRDConfig holds minimum version requirements for required CRDs.
@@ -155,46 +153,6 @@ type LatencyThreshold struct {
 	Warn float64 `yaml:"warn" json:"warn"`
 }
 
-
-// ImageConfig holds container images for multi-node test jobs.
-// Allows per-job customization while providing a default fallback.
-type ImageConfig struct {
-	// Default image for all jobs (if job-specific image not set)
-	Default string `yaml:"default" json:"default"`
-
-	// Per-job image overrides (empty string means use Default)
-	Jobs JobImages `yaml:"jobs" json:"jobs"`
-}
-
-// JobImages maps job types to their container images.
-type JobImages struct {
-	Iperf3   string `yaml:"iperf3,omitempty" json:"iperf3,omitempty"`
-	RDMA     string `yaml:"rdma,omitempty" json:"rdma,omitempty"`
-	NCCL     string `yaml:"nccl,omitempty" json:"nccl,omitempty"`
-	Pingmesh string `yaml:"pingmesh,omitempty" json:"pingmesh,omitempty"`
-}
-
-// GetJobImage returns the appropriate image for a job type, falling back to default.
-func (ic *ImageConfig) GetJobImage(jobType string) string {
-	var jobImage string
-	switch jobType {
-	case "iperf3":
-		jobImage = ic.Jobs.Iperf3
-	case "rdma":
-		jobImage = ic.Jobs.RDMA
-	case "nccl":
-		jobImage = ic.Jobs.NCCL
-	case "pingmesh":
-		jobImage = ic.Jobs.Pingmesh
-	}
-
-	// If job-specific image is empty, use default
-	if jobImage == "" {
-		return ic.Default
-	}
-	return jobImage
-}
-
 // platformFileMap maps platform names to their embedded config files.
 var platformFileMap = map[Platform]string{
 	PlatformAKS:       "platforms/aks.yaml",
@@ -203,21 +161,7 @@ var platformFileMap = map[Platform]string{
 	PlatformOCP:       "platforms/ocp.yaml",
 }
 
-// loadImageConfig reads the embedded image configuration from manifests/image-references/jobs.yaml.
-func loadImageConfig() (ImageConfig, error) {
-	// The YAML file contains just an "images" key, so we need a wrapper struct
-	var wrapper struct {
-		Images ImageConfig `yaml:"images"`
-	}
-	if err := yaml.Unmarshal([]byte(imagereferences.JobsYAML), &wrapper); err != nil {
-		return ImageConfig{}, fmt.Errorf("failed to parse embedded image config: %w", err)
-	}
-
-	return wrapper.Images, nil
-}
-
 // GetConfig returns the embedded platform config for the given platform.
-// Image configuration is loaded from manifests/image-references/jobs.yaml (shared across platforms).
 func GetConfig(platform Platform) (PlatformConfig, error) {
 	filename, ok := platformFileMap[platform]
 	if !ok {
@@ -234,13 +178,6 @@ func GetConfig(platform Platform) (PlatformConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return PlatformConfig{}, fmt.Errorf("failed to parse embedded config for %s: %w", platform, err)
 	}
-
-	// Load shared image configuration
-	imgCfg, err := loadImageConfig()
-	if err != nil {
-		return PlatformConfig{}, err
-	}
-	cfg.Images = imgCfg
 
 	return cfg, nil
 }
