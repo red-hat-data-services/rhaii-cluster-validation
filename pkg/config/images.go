@@ -17,12 +17,10 @@ const (
 
 // imageReferencesManifest mirrors the YAML structure in image-references.yaml.
 type imageReferencesManifest struct {
-	Patch struct {
-		RelatedImages []struct {
-			Name  string `yaml:"name"`
-			Value string `yaml:"value"`
-		} `yaml:"relatedImages"`
-	} `yaml:"patch"`
+	RelatedImages []struct {
+		Name  string `yaml:"name"`
+		Value string `yaml:"value"`
+	} `yaml:"relatedImages"`
 }
 
 // ResolveImages returns the validator and tools container images by:
@@ -34,7 +32,7 @@ func ResolveImages() (validatorImage, toolsImage string, err error) {
 		return "", "", fmt.Errorf("failed to parse embedded image references: %w", err)
 	}
 
-	for _, img := range manifest.Patch.RelatedImages {
+	for _, img := range manifest.RelatedImages {
 		switch img.Name {
 		case EnvValidatorImage:
 			validatorImage = img.Value
