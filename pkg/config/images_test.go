@@ -1,14 +1,13 @@
 package config
 
 import (
-	"os"
 	"testing"
 )
 
 func TestResolveImages_Defaults(t *testing.T) {
 	// Clear any env vars that might interfere
-	os.Unsetenv(EnvValidatorImage)
-	os.Unsetenv(EnvToolsImage)
+	t.Setenv(EnvValidatorImage, "")
+	t.Setenv(EnvToolsImage, "")
 
 	validator, tools, err := ResolveImages()
 	if err != nil {
@@ -24,10 +23,8 @@ func TestResolveImages_Defaults(t *testing.T) {
 }
 
 func TestResolveImages_EnvOverrideBoth(t *testing.T) {
-	os.Setenv(EnvValidatorImage, "my-validator:v1")
-	os.Setenv(EnvToolsImage, "my-tools:v2")
-	defer os.Unsetenv(EnvValidatorImage)
-	defer os.Unsetenv(EnvToolsImage)
+	t.Setenv(EnvValidatorImage, "my-validator:v1")
+	t.Setenv(EnvToolsImage, "my-tools:v2")
 
 	validator, tools, err := ResolveImages()
 	if err != nil {
@@ -44,9 +41,8 @@ func TestResolveImages_EnvOverrideBoth(t *testing.T) {
 
 func TestResolveImages_EnvOverridePartial(t *testing.T) {
 	// Only override tools image
-	os.Unsetenv(EnvValidatorImage)
-	os.Setenv(EnvToolsImage, "custom-tools:latest")
-	defer os.Unsetenv(EnvToolsImage)
+	t.Setenv(EnvValidatorImage, "")
+	t.Setenv(EnvToolsImage, "custom-tools:latest")
 
 	validator, tools, err := ResolveImages()
 	if err != nil {
