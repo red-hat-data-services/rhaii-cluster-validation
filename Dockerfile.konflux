@@ -30,7 +30,6 @@ RUN dnf install -y \
       && dnf clean all
 
 COPY --from=builder /opt/app-root/rhaii-validator /usr/local/bin/rhaii-validator
-COPY --from=builder /opt/app-root/src/manifests/image-references/image-references.yaml /etc/rhaii-validate/image-references.yaml
 
 # TODO: evaluate if non-root (USER 1001) is viable — topology checks and
 # ib_write_bw may require root for device access when running in 'run' mode.
