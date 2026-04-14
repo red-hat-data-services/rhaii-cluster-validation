@@ -1,0 +1,55 @@
+package config
+
+import (
+	"fmt"
+	"os"
+
+	imagereferences "github.com/opendatahub-io/rhaii-cluster-validation/manifests/image-references"
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	// EnvValidatorImage is the environment variable for overriding the validator container image.
+	EnvValidatorImage = "RELATED_IMAGE_RHAII_CLUSTER_VALIDATOR"
+	// EnvToolsImage is the environment variable for overriding the tools container image.
+	EnvToolsImage = "RELATED_IMAGE_RHAII_VALIDATOR_TOOLS"
+)
+
+// imageReferencesManifest mirrors the YAML structure in image-references.yaml.
+type imageReferencesManifest struct {
+	Patch struct {
+		RelatedImages []struct {
+			Name  string `yaml:"name"`
+			Value string `yaml:"value"`
+		} `yaml:"relatedImages"`
+	} `yaml:"patch"`
+}
+
+// ResolveImages returns the validator and tools container images by:
+// 1. Loading embedded defaults from image-references.yaml
+// 2. Overriding with environment variables if set
+func ResolveImages() (validatorImage, toolsImage string, err error) {
+	var manifest imageReferencesManifest
+	if err := yaml.Unmarshal([]byte(imagereferences.ImageReferencesYAML), &manifest); err != nil {
+		return "", "", fmt.Errorf("failed to parse embedded image references: %w", err)
+	}
+
+	for _, img := range manifest.Patch.RelatedImages {
+		switch img.Name {
+		case EnvValidatorImage:
+			validatorImage = img.Value
+		case EnvToolsImage:
+			toolsImage = img.Value
+		}
+	}
+
+	// Environment variables override embedded defaults
+	if v := os.Getenv(EnvValidatorImage); v != "" {
+		validatorImage = v
+	}
+	if v := os.Getenv(EnvToolsImage); v != "" {
+		toolsImage = v
+	}
+
+	return validatorImage, toolsImage, nil
+}

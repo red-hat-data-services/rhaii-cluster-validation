@@ -56,7 +56,8 @@ const (
 type Options struct {
 	Kubeconfig   string
 	Namespace    string
-	Image        string
+	Image        string // Validator container image (self-reference)
+	ToolsImage   string // Tools container image (iperf3, RDMA, pingmesh)
 	Timeout      time.Duration
 	ConfigFile   string
 	Nodes        []string // Restrict to specific nodes (default: all GPU nodes)
@@ -1392,7 +1393,7 @@ func (c *Controller) runPingMesh(ctx context.Context, gpuNodes []string, netRepo
 		rdmaCfg.Annotations[k] = v
 	}
 
-	toolsImage := c.cfg.Images.GetJobImage("pingmesh")
+	toolsImage := c.opts.ToolsImage
 
 	// Build job map for all N-choose-2 pairs
 	jobMap := make(map[jobrunner.NodePair]jobrunner.Job)
@@ -1999,22 +2000,12 @@ func (c *Controller) configureJobs(ctx context.Context, gpuNodes []string) {
 			}
 		}
 
-		// Container images from image config
+		// Container images: tcp-latency uses validator image (built-in tcp-lat),
+		// all other jobs use the tools image.
 		if imgConfig, ok := job.(jobrunner.ImageConfigurable); ok {
-			var jobImage string
-
-			// Special case: tcp-latency uses validator image (has built-in tcp-lat tool)
+			jobImage := c.opts.ToolsImage
 			if job.Name() == "tcp-latency" {
 				jobImage = c.opts.Image
-			} else {
-				configKey := jobConfigKey(job.Name())
-				if configKey == "" {
-					continue
-				}
-				jobImage = c.cfg.Images.GetJobImage(configKey)
-				if jobImage == "" {
-					continue
-				}
 			}
 
 			if imgConfig.GetServerImage() == "" {
@@ -2029,23 +2020,6 @@ func (c *Controller) configureJobs(ctx context.Context, gpuNodes []string) {
 			}
 			fmt.Fprintf(c.output, "  Job %s: using image %s\n", job.Name(), jobImage)
 		}
-	}
-}
-
-// jobConfigKey maps job names to image config keys.
-func jobConfigKey(jobName string) string {
-	if strings.HasPrefix(jobName, "ib-write-bw") {
-		return "rdma"
-	}
-	switch jobName {
-	case "iperf3-tcp":
-		return "iperf3"
-	case "tcp-latency":
-		return "" // Uses validator image (built-in tcp-lat tool)
-	case "nccl-allreduce":
-		return "nccl"
-	default:
-		return ""
 	}
 }
 
