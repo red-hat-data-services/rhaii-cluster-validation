@@ -49,5 +49,16 @@ func ResolveImages() (validatorImage, toolsImage string, err error) {
 		toolsImage = v
 	}
 
+	var missing []string
+	if validatorImage == "" {
+		missing = append(missing, EnvValidatorImage)
+	}
+	if toolsImage == "" {
+		missing = append(missing, EnvToolsImage)
+	}
+	if len(missing) > 0 {
+		return "", "", fmt.Errorf("missing required image(s): %v — set via image-references.yaml or environment variables", missing)
+	}
+
 	return validatorImage, toolsImage, nil
 }
