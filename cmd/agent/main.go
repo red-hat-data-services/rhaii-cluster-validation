@@ -18,10 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	version      = "dev"
-	defaultImage = "quay.io/opendatahub/odh-rhaii-cluster-validator:latest"
-)
+var version = "dev"
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -270,8 +267,17 @@ Operators:
 
 // runDeploy creates a controller, applies the setup function, and runs validation.
 func runDeploy(opts controller.Options, setup func(*controller.Controller)) error {
+	validatorImage, toolsImage, err := config.ResolveImages()
+	if err != nil {
+		return fmt.Errorf("failed to resolve container images: %w", err)
+	}
+
+	// CLI flags override the resolved images
 	if opts.Image == "" {
-		opts.Image = defaultImage
+		opts.Image = validatorImage
+	}
+	if opts.ToolsImage == "" {
+		opts.ToolsImage = toolsImage
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -290,7 +296,8 @@ func runDeploy(opts controller.Options, setup func(*controller.Controller)) erro
 func addDeployFlags(cmd *cobra.Command, opts *controller.Options) {
 	cmd.Flags().StringVar(&opts.Kubeconfig, "kubeconfig", "", "Path to kubeconfig")
 	cmd.Flags().StringVar(&opts.Namespace, "namespace", "rhaii-validation", "Namespace for validation pods")
-	cmd.Flags().StringVar(&opts.Image, "image", "", "Agent container image")
+	cmd.Flags().StringVar(&opts.Image, "image", "", "Validator container image override")
+	cmd.Flags().StringVar(&opts.ToolsImage, "tools-image", "", "Tools container image override (iperf3, RDMA)")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 0, "Timeout for checks (default 5m)")
 	cmd.Flags().StringVar(&opts.ConfigFile, "config", "", "Path to config override file")
 	cmd.Flags().BoolVar(&opts.Debug, "debug", false, "Keep pods alive after run for debugging")
