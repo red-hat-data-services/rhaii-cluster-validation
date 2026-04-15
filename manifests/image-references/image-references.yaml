@@ -1,5 +1,5 @@
 relatedImages:
   - name: RELATED_IMAGE_RHAII_CLUSTER_VALIDATOR
-    value: "quay.io/opendatahub/odh-rhaii-cluster-validator:latest"
+    value: "quay.io/opendatahub/odh-rhaii-cluster-validator:odh-stable"
   - name: RELATED_IMAGE_RHAII_VALIDATOR_TOOLS
-    value: "quay.io/opendatahub/odh-rhaii-validator-tools:latest"
+    value: "quay.io/opendatahub/odh-rhaii-validator-tools:odh-stable"

@@ -201,7 +201,7 @@ PASS: `TCP bandwidth: 94.5 Gbps (threshold: 25 Gbps)`
 WARN: `TCP bandwidth: 15.0 Gbps (below 25 Gbps threshold)`
 FAIL: `TCP bandwidth: 7.6 Gbps (well below 25 Gbps threshold)`
 
-Image: `quay.io/opendatahub/odh-rhaii-validator-tools:latest` (from `manifests/image-references/jobs.yaml`)
+Image: `quay.io/opendatahub/odh-rhaii-validator-tools:odh-stable` (default: `quay.io/opendatahub/odh-rhaii-validator-tools:odh-stable`)
 
 ### RDMA Bandwidth (ib_write_bw)
 
@@ -229,7 +229,7 @@ Compares against `thresholds.rdma_bandwidth_pd_gbps` from platform config.
 PASS: `RDMA bandwidth: 195.2 Gbps (threshold: 180 Gbps)`
 FAIL: `RDMA bandwidth: 50.1 Gbps (well below 180 Gbps threshold)`
 
-Image: `quay.io/opendatahub/odh-rhaii-validator-tools:latest` (from `manifests/image-references/jobs.yaml`)
+Image: `quay.io/opendatahub/odh-rhaii-validator-tools:odh-stable` (default: `quay.io/opendatahub/odh-rhaii-validator-tools:odh-stable`)
 
 ## Ring Topology
 
@@ -291,7 +291,7 @@ Report:
 | Requirement | Why |
 |-------------|-----|
 | 2+ GPU nodes | Ring topology needs at least 2 nodes |
-| Job container image pullable | `quay.io/opendatahub/odh-rhaii-validator-tools:latest` by default |
+| Job container images pullable | Override with `--image`, `--tools-image`, or env vars `RELATED_IMAGE_RHAII_CLUSTER_VALIDATOR` / `RELATED_IMAGE_RHAII_VALIDATOR_TOOLS` |
 
 ### Required for RDMA Tests
 
@@ -352,7 +352,7 @@ Report:
 - RDMA tests expanded per GPU-NIC pair using discovered topology
 - RDMA tests skipped if no RDMA resource configured
 - Report stored in ConfigMap for persistence
-- Job images defined in `manifests/image-references/jobs.yaml` (embedded at build time)
+- Default images defined in `manifests/image-references/image-references.yaml` (embedded via `//go:embed`), overridable with env vars (`RELATED_IMAGE_RHAII_CLUSTER_VALIDATOR`, `RELATED_IMAGE_RHAII_VALIDATOR_TOOLS`) or CLI flags (`--image`, `--tools-image`)
 
 ## GPU Vendor Support
 
