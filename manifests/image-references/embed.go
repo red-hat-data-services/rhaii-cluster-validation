@@ -4,7 +4,7 @@ import (
 	_ "embed"
 )
 
-// JobsYAML contains the embedded image configuration
+// ImageReferencesYAML contains the embedded default image references.
 //
-//go:embed jobs.yaml
-var JobsYAML string
+//go:embed image-references.yaml
+var ImageReferencesYAML string

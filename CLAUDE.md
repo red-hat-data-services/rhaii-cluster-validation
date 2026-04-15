@@ -114,7 +114,7 @@ rhaii-cluster-validation/
 │   ├── jobrunner/                 # Multi-node job framework (ring/star/pairwise, debug, scheduling)
 │   └── runner/                    # Per-node check execution
 ├── manifests/image-references/
-│   ├── jobs.yaml                  # Job container images (embedded via //go:embed)
+│   ├── image-references.yaml      # Default container images (embedded via //go:embed, env var overrides)
 │   └── embed.go
 ├── deploy/
 │   ├── node-check-job.yaml        # Per-node Job template (host root at /host, hostPID)
@@ -189,18 +189,18 @@ thresholds:
 
 ## Job Images
 
-Defined in `manifests/image-references/jobs.yaml`, embedded at build time:
+Two container images are used by validation jobs:
+- **Validator image** (`RELATED_IMAGE_RHAII_CLUSTER_VALIDATOR`): The rhaii-validator binary itself, used for per-node checks and TCP latency tests (built-in `tcp-lat` tool).
+- **Tools image** (`RELATED_IMAGE_RHAII_VALIDATOR_TOOLS`): Contains iperf3, ib_write_bw, ibv_rc_pingpong for network/RDMA jobs.
 
-```yaml
-images:
-  default: "quay.io/opendatahub/odh-rhaii-validator-tools:latest"
-  jobs:
-    iperf3: ""   # uses default (includes iperf3)
-    rdma: ""     # uses default
-    nccl: ""     # uses default
+Defaults are defined in `manifests/image-references/image-references.yaml` (embedded via `//go:embed`).
+Override at runtime with environment variables:
+```bash
+export RELATED_IMAGE_RHAII_CLUSTER_VALIDATOR=myregistry/validator:v1
+export RELATED_IMAGE_RHAII_VALIDATOR_TOOLS=myregistry/tools:v1
 ```
 
-**NOTE:** The `iperf3` image is used for iperf3 jobs. The TCP latency test uses the validator image with built-in `tcp-lat` tool (no external dependencies).
+The CLI `--image` flag overrides the validator image only.
 
 ## Pingmesh (RDMA Connectivity)
 
