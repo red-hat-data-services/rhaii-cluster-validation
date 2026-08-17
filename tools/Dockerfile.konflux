@@ -26,7 +26,7 @@ RUN test -f /tmp/perftest/autogen.sh || \
     make install DESTDIR=/install
 
 # Runtime stage — vanilla UBI9, libcudart copied from builder
-FROM registry.redhat.io/ubi9/ubi@sha256:069fa720cb30418a7c984da2ddb9c69df2a3a140d5568323333dbfb06ffeae53
+FROM registry.redhat.io/ubi9/ubi@sha256:1ffb072b3ddb8f44a826477d6d2dd2992fc3f5984734e84ce5bf71e9e375cf19
 
 # Root required: RDMA perftest (ib_write_bw, ib_read_bw) and GPU bandwidth tools
 # need direct access to InfiniBand/RoCE devices and CUDA runtime.
