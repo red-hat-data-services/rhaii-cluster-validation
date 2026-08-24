@@ -508,27 +508,27 @@ arches:
     name: jq
     evr: 1.6-19.el9_8.2
     sourcerpm: jq-1.6-19.el9_8.2.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/k/kbd-2.4.0-11.el9.aarch64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/k/kbd-2.4.0-12.el9_8.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 420178
-    checksum: sha256:11708f1c4bdfefec355521f6a325f8cb32cb4e0be76fc6e3f97d26eb45798d7a
+    size: 419233
+    checksum: sha256:2e9d8fa972d2cea49db46bea3655be88648092780f8be399d613f70ae1f99614
     name: kbd
-    evr: 2.4.0-11.el9
-    sourcerpm: kbd-2.4.0-11.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/k/kbd-legacy-2.4.0-11.el9.noarch.rpm
+    evr: 2.4.0-12.el9_8
+    sourcerpm: kbd-2.4.0-12.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/k/kbd-legacy-2.4.0-12.el9_8.noarch.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 579544
-    checksum: sha256:8dcc48e93bffc5e2d819f8c8c468648362c13d554f756c421711386c8fadf950
+    size: 581999
+    checksum: sha256:afa9554281da4aee85281208c67f748363da116cd20703cf454ec8348b3e945d
     name: kbd-legacy
-    evr: 2.4.0-11.el9
-    sourcerpm: kbd-2.4.0-11.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/k/kbd-misc-2.4.0-11.el9.noarch.rpm
+    evr: 2.4.0-12.el9_8
+    sourcerpm: kbd-2.4.0-12.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/k/kbd-misc-2.4.0-12.el9_8.noarch.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 1739470
-    checksum: sha256:f698c807d4805c83b2dc8564427a7c4445d1c41a23d4bdb7988eba489e73932f
+    size: 1741836
+    checksum: sha256:d18d23826f34a8b7b5ad64eacb4e32cbc0fa5f332d64d70e8e0c27e11b0f2506
     name: kbd-misc
-    evr: 2.4.0-11.el9
-    sourcerpm: kbd-2.4.0-11.el9.src.rpm
+    evr: 2.4.0-12.el9_8
+    sourcerpm: kbd-2.4.0-12.el9_8.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/k/kmod-28-11.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
     size: 125869
