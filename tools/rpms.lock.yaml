@@ -11,13 +11,13 @@ arches:
     name: infiniband-diags
     evr: 61.0-2.el9
     sourcerpm: rdma-core-61.0-2.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/i/iperf3-3.9-17.el9_8.aarch64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/i/iperf3-3.9-17.el9_8.1.aarch64.rpm
     repoid: ubi-9-for-aarch64-appstream-rpms
-    size: 112342
-    checksum: sha256:a39ade81e09323143528dd36be026054e786b29880885eeef1a0fbbf5e9c8cd0
+    size: 112957
+    checksum: sha256:8ac3cff2e08f2e93d4e73dc0539843ef12bb0517c818cf1486d641898842230b
     name: iperf3
-    evr: 3.9-17.el9_8
-    sourcerpm: iperf3-3.9-17.el9_8.src.rpm
+    evr: 3.9-17.el9_8.1
+    sourcerpm: iperf3-3.9-17.el9_8.1.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/o/oniguruma-6.9.6-1.el9.5.aarch64.rpm
     repoid: ubi-9-for-aarch64-appstream-rpms
     size: 222582
@@ -666,13 +666,13 @@ arches:
     name: infiniband-diags
     evr: 61.0-2.el9
     sourcerpm: rdma-core-61.0-2.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/i/iperf3-3.9-17.el9_8.x86_64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/i/iperf3-3.9-17.el9_8.1.x86_64.rpm
     repoid: ubi-9-for-x86_64-appstream-rpms
-    size: 116104
-    checksum: sha256:6cb38c12dce9b3214db2330c176f9788c8168f43a3f84b79f50b5d991c4a3368
+    size: 116437
+    checksum: sha256:e19e7132eed0af6d8a16692c2ffbe3870fa020a6ad9eea7977d4893e4d520ee6
     name: iperf3
-    evr: 3.9-17.el9_8
-    sourcerpm: iperf3-3.9-17.el9_8.src.rpm
+    evr: 3.9-17.el9_8.1
+    sourcerpm: iperf3-3.9-17.el9_8.1.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/o/oniguruma-6.9.6-1.el9.5.x86_64.rpm
     repoid: ubi-9-for-x86_64-appstream-rpms
     size: 226331
