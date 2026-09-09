@@ -85,6 +85,10 @@ RUN dnf install -y \
     iperf3 tcpdump pciutils libnl3 \
     && dnf clean all
 
+
+# RHOAIENG-93781: enable post-quantum cryptography support
+RUN update-crypto-policies --set DEFAULT:PQ
+
 # Copy all shared libraries (rdma-core + libfabric)
 COPY --from=builder \
     /usr/lib64/libib* \

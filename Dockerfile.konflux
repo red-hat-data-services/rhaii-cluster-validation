@@ -29,6 +29,9 @@ RUN dnf install -y \
       libibverbs-utils \
       && dnf clean all
 
+# RHOAIENG-93781: enable post-quantum cryptography support
+RUN update-crypto-policies --set DEFAULT:PQ
+
 COPY --from=builder /opt/app-root/rhaii-validator /usr/local/bin/rhaii-validator
 
 # TODO: evaluate if non-root (USER 1001) is viable — topology checks and
