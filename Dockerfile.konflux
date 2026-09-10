@@ -11,7 +11,7 @@ ARG VERSION=dev
 RUN CGO_ENABLED=1 GOOS=linux GOEXPERIMENT=strictfipsruntime go build -buildvcs=false -ldflags "-X main.version=${VERSION}" -o /opt/app-root/rhaii-validator ./cmd/agent/
 
 # Runtime stage
-FROM registry.access.redhat.com/ubi9/ubi@sha256:206b65b8ee0f04b992818c9a51b29081b14974630d4850bc358097d0c44ea156
+FROM quay.io/aipcc/base-images/cpu-el9.8@sha256:5dbe6a3e14877ef9fbda55e6cef66430a244c6a5c73a9a72bfef5b3af31e44c5
 
 LABEL name="rhoai/odh-rhaii-cluster-validator-rhel9" \
       com.redhat.component="odh-rhaii-cluster-validator-rhel9" \
@@ -28,6 +28,9 @@ RUN dnf install -y \
       infiniband-diags \
       libibverbs-utils \
       && dnf clean all
+
+# RHOAIENG-93781: enable post-quantum cryptography support
+RUN update-crypto-policies --set DEFAULT:PQ
 
 COPY --from=builder /opt/app-root/rhaii-validator /usr/local/bin/rhaii-validator
 
