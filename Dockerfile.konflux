@@ -29,6 +29,8 @@ RUN dnf install -y \
       libibverbs-utils \
       && dnf clean all
 
+RUN update-crypto-policies --set DEFAULT:PQ --no-reload
+
 COPY --from=builder /opt/app-root/rhaii-validator /usr/local/bin/rhaii-validator
 
 # TODO: evaluate if non-root (USER 1001) is viable — topology checks and
