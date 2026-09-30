@@ -13,4 +13,4 @@ arches:
   - aarch64
 
 context:
-  containerfile: Dockerfile.konflux.cluster-validation
+  containerfile: Dockerfile.konflux
