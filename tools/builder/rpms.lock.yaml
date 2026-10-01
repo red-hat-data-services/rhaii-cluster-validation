@@ -144,13 +144,6 @@ arches:
     name: libnl3-cli
     evr: 3.11.0-1.el9
     sourcerpm: libnl3-3.11.0-1.el9.src.rpm
-  - url: https://developer.download.nvidia.com/compute/cuda/repos/rhel9/sbsa/cuda-nvml-devel-13-0-13.0.87-1.aarch64.rpm
-    repoid: external-nvidia-cuda-for-rhel-9-sbsa-rpms
-    size: 230722
-    checksum: sha256:7bf53bfaa22dbf06c6d3c437b5eb2f944583cdce896a7fbd5e55f9644e497c6a
-    name: cuda-nvml-devel-13-0
-    evr: 13.0.87-1
-    sourcerpm: cuda-nvml-devel-13-0-13.0.87-1.src.rpm
   source: []
   module_metadata: []
 - arch: x86_64
@@ -295,12 +288,5 @@ arches:
     name: libnl3-cli
     evr: 3.11.0-1.el9
     sourcerpm: libnl3-3.11.0-1.el9.src.rpm
-  - url: https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-nvml-devel-13-0-13.0.87-1.x86_64.rpm
-    repoid: external-nvidia-cuda-for-rhel-9-x86_64-rpms
-    size: 224118
-    checksum: sha256:2407149740d0fc20fe8b77d4ba022e33c28c7edfd2c9f4066c6931749a840bd3
-    name: cuda-nvml-devel-13-0
-    evr: 13.0.87-1
-    sourcerpm: cuda-nvml-devel-13-0-13.0.87-1.src.rpm
   source: []
   module_metadata: []
