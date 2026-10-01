@@ -1,7 +1,7 @@
 contentOrigin:
   repofiles:
     - ../../rpm-repos/redhat.repo
-    - ../../rpm-repos/nvidia-cuda.repo
+    - ../../rpm-repos/rhelai-cuda.repo
 
 packages:
   # Builder stage (build dependencies for rdma-core, libfabric, fabtests, and perftest)
