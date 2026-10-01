@@ -16,7 +16,7 @@ RUN dnf install -y \
     libnl3-devel \
     python3 \
     pciutils-devel \
-    --enablerepo="external-nvidia-cuda-for-rhel-9-$(uname -m | sed 's/x86_64/x86_64/;s/aarch64/sbsa/')-rpms" \
+    --enablerepo="rhelai-3.6-cuda-for-rhel-9-$(uname -m)-rpms" \
     cuda-nvml-devel-13-0 \
     && dnf clean all
 
