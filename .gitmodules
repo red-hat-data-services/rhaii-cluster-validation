@@ -7,3 +7,6 @@
 [submodule "tools/libfabric"]
 	path = tools/libfabric
 	url = https://github.com/aws/libfabric.git
+[submodule "tools/go-nvml"]
+	path = tools/go-nvml
+	url = https://github.com/NVIDIA/go-nvml.git
