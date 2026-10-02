@@ -115,6 +115,17 @@ Konflux builds use [rpm-lockfile-prototype](https://github.com/konflux-ci/rpm-lo
 
 The builder and runtime stages are split because the CUDA base image has older packages than UBI9 — resolving both against a single base image causes version conflicts.
 
+**Do not add `cuda-nvml-devel` back as an RPM.** libfabric's CUDA HMEM (`src/hmem_cuda.c`) needs `nvml.h`, which the CUDA base image does not ship. The only RPM source is NVIDIA's own repo, and its repo id (`external-nvidia-cuda-for-rhel-9-*-rpms`) is not in Conforma's [known_rpm_repositories](https://github.com/release-engineering/rhtap-ec-policy/blob/main/data/known_rpm_repositories.yml), so prefetching it fails the `rpm_repos.ids_known` policy. The header comes from the `tools/go-nvml` submodule instead. It is needed at compile time only — `--enable-cuda-dlopen` means libfabric never links `libnvidia-ml`, and the header never reaches the runtime stage.
+
+Two things to get right when touching that submodule:
+
+- **Use `gen/nvml/nvml.h`, never `pkg/nvml/nvml.h`.** `gen/` is the pristine upstream header (byte-identical to NVIDIA's published `cuda_nvml_dev` archive). `pkg/` rewrites the opaque handle typedefs (`nvmlDevice_t`, `nvmlUnit_t`, `nvmlEventSet_t`, …) from pointers into cgo wrapper structs, which do not match `libnvidia-ml.so`'s real ABI. libfabric's three NVML calls don't touch those types, so the wrong file still compiles — the breakage would be silent.
+- **Pin to a tag in the base image's CUDA stream** (currently `v0.13.0-1` = NVML 13.0.39, matching CUDA 13.0). go-nvml tags track NVML releases; `main` floats well ahead. After `git checkout <tag>` inside the submodule, re-run `git add tools/go-nvml` — otherwise the gitlink still records the branch tip that `git submodule add` staged.
+
+*Precedent and fallback.* Red Hat's own `ucx-cuda` does the same thing in RPM form: `ucx-1.21.0-3.el9ai.src.rpm` (rhelai-3.6) carries five NVIDIA CUDA tarballs as `SourceN:` — including `cuda_nvml_dev-linux-{x86_64,sbsa}-13.0.87-archive.tar.xz` — untars them into a synthetic root in `%prep`, and builds with `--with-cuda=$(pwd)/../cuda`, with no `BuildRequires` on any NVIDIA repo. Same principle as our submodule: take the header as *source*, so cachi2 never records it as an RPM and `rpm_repos.ids_known` never applies. The bundled tarballs are unmodified upstream (checksums match NVIDIA's `redistrib_*.json`), which also means Red Hat already redistributes these files in a shipped SRPM.
+
+If the submodule is ever objected to, the closest equivalent for a container build is cachi2's [generic fetcher](https://github.com/hermetoproject/cachi2/blob/main/docs/generic.md): an `artifacts.lock.yaml` pulling the same tarballs from `https://developer.download.nvidia.com/compute/cuda/redist/` with pinned checksums, plus `{"type": "generic"}` in `prefetch-input`. Per-release component versions and SHA256s are listed in `redist/redistrib_<cuda-version>.json`. The same spec is also the template if we ever need more than `nvml.h` (cudart, cccl, crt, nvcc headers).
+
 **Adding a new RPM package:**
 
 1. Add the package to the relevant `dnf install` in the Dockerfile
