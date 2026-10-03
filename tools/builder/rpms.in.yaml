@@ -1,7 +1,6 @@
 contentOrigin:
   repofiles:
     - ../../rpm-repos/redhat.repo
-    - ../../rpm-repos/nvidia-cuda.repo
 
 packages:
   # Builder stage (build dependencies for rdma-core, libfabric, fabtests, and perftest)
@@ -18,7 +17,6 @@ packages:
   - libnl3-devel
   - python3
   - pciutils-devel
-  - cuda-nvml-devel-13-0
 
 arches:
   - x86_64

@@ -8,7 +8,7 @@ USER root
 # switch from internal mirrors to public vendor repos
 RUN ${APP_ROOT}/lib/tools/public-repos.sh
 
-# Install build dependencies (cuda-nvml-devel for nvml.h header needed by libfabric CUDA HMEM)
+# Install build dependencies
 RUN dnf install -y \
     gcc gcc-c++ make diffutils \
     autoconf automake libtool pkg-config \
@@ -16,9 +16,20 @@ RUN dnf install -y \
     libnl3-devel \
     python3 \
     pciutils-devel \
-    --enablerepo="external-nvidia-cuda-for-rhel-9-$(uname -m | sed 's/x86_64/x86_64/;s/aarch64/sbsa/')-rpms" \
-    cuda-nvml-devel-13-0 \
     && dnf clean all
+
+# nvml.h for libfabric's CUDA HMEM support (src/hmem_cuda.c includes it under
+# HAVE_CUDA). This base image ships cuda-cudart-devel but not cuda-nvml-devel,
+# and the only RPM source for that header is NVIDIA's own repo, whose repo id is
+# not in Conforma's known_rpm_repositories list. So we vendor the header from a
+# pinned submodule, like rdma-core/libfabric/perftest. Compile-time only: with
+# --enable-cuda-dlopen libfabric never links libnvidia-ml, it dlopen()s
+# libnvidia-ml.so.1 at runtime, and the header never reaches the runtime stage.
+# NOTE: use gen/nvml/nvml.h (pristine upstream header), NOT pkg/nvml/nvml.h —
+# the latter rewrites opaque handle typedefs (nvmlDevice_t etc.) into cgo
+# wrapper structs, which would not match libnvidia-ml.so's real ABI.
+COPY tools/go-nvml/gen/nvml/nvml.h /tmp/nvml.h
+RUN cp /tmp/nvml.h /usr/local/cuda/include/nvml.h && rm /tmp/nvml.h
 
 # --- Step 1: Build and install rdma-core v60.0 to /usr ---
 # Provides: libibverbs.so, libefa.so (EFA), libmlx5.so (IB/RoCE), librdmacm.so
@@ -73,7 +84,7 @@ RUN test -f /tmp/perftest/autogen.sh || \
     make install DESTDIR=/opt/perftest
 
 # Runtime stage — vanilla UBI9, all RDMA libs copied from builder
-FROM registry.redhat.io/ubi9/ubi@sha256:7a38d75d376f7989033e75fcaaf9fcbb090fafc58e05c2c99de76ae0ba083fdb
+FROM registry.redhat.io/ubi9/ubi@sha256:094ea2ecfd3225af8f93807b99daa9ff33710fc705ebdf6e8466f46ed605585c
 
 USER root
 WORKDIR /root
