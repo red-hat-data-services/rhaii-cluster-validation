@@ -31,7 +31,7 @@ RUN dnf install -y \
 COPY tools/go-nvml/gen/nvml/nvml.h /tmp/nvml.h
 RUN cp /tmp/nvml.h /usr/local/cuda/include/nvml.h && rm /tmp/nvml.h
 
-# --- Step 1: Build and install rdma-core v60.0 to /usr ---
+# --- Step 1: Build and install rdma-core from the pinned submodule ---
 # Provides: libibverbs.so, libefa.so (EFA), libmlx5.so (IB/RoCE), librdmacm.so
 # NOTE: Unlike Dockerfile.dev, we do NOT need -DENABLE_RESOLVE_NEIGH=0 here
 # because libnl3-devel is available from RH repos (installed above).
@@ -46,7 +46,7 @@ RUN cd /tmp/rdma-core && \
     ninja -C build install && \
     ldconfig
 
-# --- Step 2: Build and install libfabric v2.3.1amzn4.0 to /usr ---
+# --- Step 2: Build and install libfabric from the pinned submodule ---
 # Provides: libfabric.so.1 with EFA provider + CUDA HMEM support
 # NOTE: --enable-cuda-dlopen is used because this RH CUDA base image has no
 # libcuda.so/libnvidia-ml.so stubs. dlopen loads them at runtime via NVIDIA
@@ -72,7 +72,7 @@ RUN cd /tmp/libfabric/fabtests && \
     make -j$(nproc) && \
     make install DESTDIR=/opt/fabtests
 
-# --- Step 4: Build perftest from source (existing) ---
+# --- Step 4: Build perftest from the pinned submodule ---
 # Provides: ib_write_bw, ibv_rc_pingpong (IB/RoCE bandwidth + reachability)
 COPY tools/perftest/ /tmp/perftest/
 RUN test -f /tmp/perftest/autogen.sh || \
@@ -106,7 +106,7 @@ COPY --from=builder \
     /usr/lib64/libmlx* \
     /usr/lib64/libfabric* \
     /usr/lib64/
-# Provider plugins directory (libefa-rdmav60.so, libmlx5-rdmav60.so, etc.)
+# Provider plugins directory (libefa-rdma*.so, libmlx5-rdma*.so, etc.)
 COPY --from=builder /usr/lib64/libibverbs/ /usr/lib64/libibverbs/
 
 # Copy RDMA & libfabric executables
