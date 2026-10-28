@@ -1,0 +1,12 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "github-actions": {
+    "packageRules": [
+      {
+        "description": "Disable GitHub Actions updates on RHOAI release branches",
+        "matchBaseBranches": ["/^rhoai-/"],
+        "enabled": false
+      }
+    ]
+  }
+}
