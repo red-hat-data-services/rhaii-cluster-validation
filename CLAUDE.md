@@ -113,7 +113,7 @@ Konflux builds use [rpm-lockfile-prototype](https://github.com/konflux-ci/rpm-lo
 | `tools/rpms.in.yaml` | validator-tools | runtime (UBI9) | `rpm-repos/ubi.repo` |
 | `tools/builder/rpms.in.yaml` | validator-tools | builder (CUDA) | `rpm-repos/redhat.repo` |
 
-The builder and runtime stages are split because the CUDA base image has older packages than UBI9 — resolving both against a single base image causes version conflicts.
+The builder and runtime stages are split because their base images have different installed package sets. Resolve dependencies against each stage's own base image to avoid version conflicts.
 
 **Do not add `cuda-nvml-devel` back as an RPM.** libfabric's CUDA HMEM (`src/hmem_cuda.c`) needs `nvml.h`, which the CUDA base image does not ship. The only RPM source is NVIDIA's own repo, and its repo id (`external-nvidia-cuda-for-rhel-9-*-rpms`) is not in Conforma's [known_rpm_repositories](https://github.com/release-engineering/rhtap-ec-policy/blob/main/data/known_rpm_repositories.yml), so prefetching it fails the `rpm_repos.ids_known` policy. The header comes from the `tools/go-nvml` submodule instead. It is needed at compile time only — `--enable-cuda-dlopen` means libfabric never links `libnvidia-ml`, and the header never reaches the runtime stage.
 
@@ -145,7 +145,7 @@ If the submodule is ever objected to, the closest equivalent for a container bui
 
 **Repo files:**
 - `rpm-repos/ubi.repo` — UBI9 repos (public, no auth). Section headers use `ubi-9-for-$basearch-*` naming to match Conforma's allowed repo ID list.
-- `rpm-repos/redhat.repo` — RHEL 9.6 EUS repos (requires entitlement certs). The cert paths in the file are placeholders — Konflux mounts real certs at build time via activation key.
+- `rpm-repos/redhat.repo` — RHEL 9.8 EUS repos, matching the CUDA builder base (requires entitlement certs). The cert paths in the file are placeholders — Konflux mounts real certs at build time via activation key.
 
 **MintMaker** automatically opens PRs to refresh lockfiles on release branches. On `main`, regenerate manually when adding/updating packages.
 
