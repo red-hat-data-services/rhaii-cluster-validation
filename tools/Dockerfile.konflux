@@ -1,6 +1,7 @@
 # CUDA base image (UBI9-based, includes CUDA devel + runtime, sha-pinned)
 # All component versions pinned to match AWS EFA installer 1.46.0 / llm-d v0.8.1
-FROM registry.redhat.io/rhai/base-image-cuda-13.0-rhel9@sha256:e29b922fee43fd4b2396768b206c280fb91482a9b141ae9dfcfafa09b7462287 AS builder
+ARG AIPCC_BASE_IMAGE=registry.redhat.io/rhai/base-image-cuda13.0-torch2.13-rhel9:1793124388@sha256:8e457469fa7dad4a2b5d7c2b39f0d0409855dd7d881c07ca51f1170b5f04dfca
+FROM ${AIPCC_BASE_IMAGE} AS builder
 
 # Needed with aipcc image
 USER root
@@ -84,7 +85,7 @@ RUN test -f /tmp/perftest/autogen.sh || \
     make install DESTDIR=/opt/perftest
 
 # Runtime stage — vanilla UBI9, all RDMA libs copied from builder
-FROM registry.redhat.io/ubi9/ubi@sha256:16e9e43d99e181463513cc84a514859b1abb9460f1c4d9e208da4b4e51cd5cc3
+FROM registry.redhat.io/ubi9/ubi@sha256:8f989cc9270da6abec0144c22846ed1e6e92e462dc7768ce0981c4ac1d574733
 
 USER root
 WORKDIR /root

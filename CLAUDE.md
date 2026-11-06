@@ -113,7 +113,7 @@ Konflux builds use [rpm-lockfile-prototype](https://github.com/konflux-ci/rpm-lo
 | `tools/rpms.in.yaml` | validator-tools | runtime (UBI9) | `rpm-repos/ubi.repo` |
 | `tools/builder/rpms.in.yaml` | validator-tools | builder (CUDA) | `rpm-repos/redhat.repo` |
 
-The builder and runtime stages are split because the CUDA base image has older packages than UBI9 — resolving both against a single base image causes version conflicts.
+The builder and runtime stages are split because their base images have different installed package sets. Resolve dependencies against each stage's own base image to avoid version conflicts.
 
 **Do not add `cuda-nvml-devel` back as an RPM.** libfabric's CUDA HMEM (`src/hmem_cuda.c`) needs `nvml.h`, which the CUDA base image does not ship. The only RPM source is NVIDIA's own repo, and its repo id (`external-nvidia-cuda-for-rhel-9-*-rpms`) is not in Conforma's [known_rpm_repositories](https://github.com/release-engineering/rhtap-ec-policy/blob/main/data/known_rpm_repositories.yml), so prefetching it fails the `rpm_repos.ids_known` policy. The header comes from the `tools/go-nvml` submodule instead. It is needed at compile time only — `--enable-cuda-dlopen` means libfabric never links `libnvidia-ml`, and the header never reaches the runtime stage.
 
@@ -126,11 +126,15 @@ Two things to get right when touching that submodule:
 
 If the submodule is ever objected to, the closest equivalent for a container build is cachi2's [generic fetcher](https://github.com/hermetoproject/cachi2/blob/main/docs/generic.md): an `artifacts.lock.yaml` pulling the same tarballs from `https://developer.download.nvidia.com/compute/cuda/redist/` with pinned checksums, plus `{"type": "generic"}` in `prefetch-input`. Per-release component versions and SHA256s are listed in `redist/redistrib_<cuda-version>.json`. The same spec is also the template if we ever need more than `nvml.h` (cudart, cccl, crt, nvcc headers).
 
-**Adding a new RPM package:**
+**When to regenerate:** Refresh the affected stage's lockfile whenever its base-image digest, RPM package list, or repository configuration changes. The generator resolves dependencies against the selected base image's RPM database and omits packages already satisfied by that base. A base-image change can therefore invalidate an unchanged lockfile. For example, the RHEL 9.8 CUDA base supplies `cmake-filesystem 3.31.8`, which cannot satisfy the exact dependency of CMake 3.26.5 selected from the previous 9.6 EUS repositories.
 
-1. Add the package to the relevant `dnf install` in the Dockerfile
-2. Add the package to the matching `rpms.in.yaml` (check which stage installs it)
-3. Regenerate the lockfile:
+**Generation environment:** Run on Linux with `rpm-lockfile-prototype`, Python DNF bindings, and `skopeo` available. Authenticate to `registry.redhat.io` so the tool can read the pinned builder image. Use a working checkout on an entitled Linux host if developing on macOS. An x86_64 host can resolve both `x86_64` and `aarch64`: the tool extracts each image's RPM database without executing ARM binaries. Leave both architectures enabled in the input; `--arch` overrides that list. See the [Konflux RPM prefetch instructions](https://konflux-ci.dev/docs/building/prefetching-dependencies/#enabling-prefetch-builds-for-rpm).
+
+**Updating packages or a base image:**
+
+1. For a new RPM, add it to the relevant Dockerfile's `dnf install` and the matching `rpms.in.yaml`. For a base-image update, check that the input's `context.containerfile` still selects the intended Dockerfile and stage. Do not resolve against the dev host's installed packages with `--local-system`.
+2. Match the builder repository minor version to the RHEL version of the new base. Confirm repository access for both architectures. UBI runtime repositories use the public UBI 9 stream; they do not have a separate EUS stream.
+3. From the repository root, regenerate only the affected stage's lockfile using its existing input configuration:
    ```bash
    # Root (cluster-validation runtime)
    rpm-lockfile-prototype --outfile rpms.lock.yaml rpms.in.yaml
@@ -141,13 +145,17 @@ If the submodule is ever objected to, the closest equivalent for a container bui
    # Tools builder (requires RHEL entitlement certs on the host)
    rpm-lockfile-prototype --outfile tools/builder/rpms.lock.yaml tools/builder/rpms.in.yaml
    ```
-4. Commit both the `rpms.in.yaml` and `rpms.lock.yaml` changes
+4. Review the generated diff. Packages may disappear because the base now supplies them; additions may be newly required transitive dependencies. Investigate unexpected downgrades or mixed minor-release repositories rather than manually inserting a missing RPM. Repeated `No sources found` warnings mean source repositories are missing; the current builder configuration has only binary repositories and empty source lists, so generation alone does not validate source-container completeness.
+5. Run `git diff --check`. Where possible, download the locked RPMs, verify their checksums, and resolve them offline against the target base's RPM database. Generation and dependency resolution do not validate package installation scripts or subsequent compilation: run the Konflux build for the full check.
+6. Commit the generated lockfile with any corresponding Dockerfile, input, repository, and documentation changes. Use signed commits. Include the architectures and validation performed in the PR description.
 
 **Repo files:**
 - `rpm-repos/ubi.repo` — UBI9 repos (public, no auth). Section headers use `ubi-9-for-$basearch-*` naming to match Conforma's allowed repo ID list.
-- `rpm-repos/redhat.repo` — RHEL 9.6 EUS repos (requires entitlement certs). The cert paths in the file are placeholders — Konflux mounts real certs at build time via activation key.
+- `rpm-repos/redhat.repo` — RHEL 9.8 EUS repos, matching the CUDA builder base. Local generation requires entitlement certificates that can access BaseOS and AppStream for both architectures. The existing `sslclientcert` and `sslclientkey` paths must resolve on the generation host; if they differ, adapt an isolated local copy and keep host-specific path changes out of the commit.
 
-**MintMaker** automatically opens PRs to refresh lockfiles on release branches. On `main`, regenerate manually when adding/updating packages.
+**Credentials and downloaded content:** Entitlement certificates/private keys and registry credentials stay on the generation host. The generated lockfile contains package URLs, repository IDs, versions, sizes, and checksums; review URLs for embedded credentials or tokens before committing. Never commit certificates, keys, registry auth files, downloaded RPMs, or image layers. Keep downloads in a temporary workspace outside the Git checkout. Konflux's prefetch task uses its own activation-key/entitlement configuration to download the locked RPMs; it must be entitled to the same repository content, but does not need the generation host's credentials. The hermetic build then consumes the prefetched RPMs without contacting the CDN. See [subscription content in Konflux](https://konflux-ci.dev/docs/building/activation-keys-subscription/).
+
+**MintMaker** automatically opens PRs to refresh lockfiles on release branches. On `main`, regenerate manually when changing packages, base images, or repository configuration.
 
 ## Coding Conventions
 
