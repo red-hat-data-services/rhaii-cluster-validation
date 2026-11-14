@@ -4,13 +4,13 @@ lockfileVendor: redhat
 arches:
 - arch: aarch64
   packages:
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/i/infiniband-diags-61.0-2.el9.aarch64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/i/infiniband-diags-61.0-3.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-appstream-rpms
-    size: 347398
-    checksum: sha256:c9cb8b7afe7433f9d8ee0d39c9983f923afa6afe3b6dd357c3e9c075f85b23a1
+    size: 347924
+    checksum: sha256:8a20136895ef030ecbb8200fd18c871619329374df46f6f928174912faac6d09
     name: infiniband-diags
-    evr: 61.0-2.el9
-    sourcerpm: rdma-core-61.0-2.el9.src.rpm
+    evr: 61.0-3.el9
+    sourcerpm: rdma-core-61.0-3.el9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/perl-AutoLoader-5.74-484.el9_8.noarch.rpm
     repoid: ubi-9-for-aarch64-appstream-rpms
     size: 26763
@@ -193,13 +193,13 @@ arches:
     name: perl-NDBM_File
     evr: 1.15-484.el9_8
     sourcerpm: perl-5.32.1-484.el9_8.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/perl-Net-SSLeay-1.94-3.el9.aarch64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/perl-Net-SSLeay-1.94-4.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-appstream-rpms
-    size: 424450
-    checksum: sha256:d2781d36ecbfb5fbbb3d73a589dfef6fcaa694facee347d0a66d70b07ebe0ed8
+    size: 429535
+    checksum: sha256:16d1989deb8af91937f2323ab564df2c6cdd39b0747401ea3ffff8ffb64d611d
     name: perl-Net-SSLeay
-    evr: 1.94-3.el9
-    sourcerpm: perl-Net-SSLeay-1.94-3.el9.src.rpm
+    evr: 1.94-4.el9
+    sourcerpm: perl-Net-SSLeay-1.94-4.el9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/perl-POSIX-1.94-484.el9_8.aarch64.rpm
     repoid: ubi-9-for-aarch64-appstream-rpms
     size: 103879
@@ -312,13 +312,13 @@ arches:
     name: perl-Time-Local
     evr: 2:1.300-7.el9
     sourcerpm: perl-Time-Local-1.300-7.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/perl-URI-5.09-3.el9_8.1.noarch.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/perl-URI-5.09-4.el9_9.noarch.rpm
     repoid: ubi-9-for-aarch64-appstream-rpms
-    size: 130351
-    checksum: sha256:5dc2921a96c8dac9acbb3b2c36a45cf71c6c9bc81b12b01d08488692f7ff5bad
+    size: 130330
+    checksum: sha256:f2cea1a1b8219ddbca6e853a5c5272daa8070ecbd10657a3ffa843e1e5757239
     name: perl-URI
-    evr: 5.09-3.el9_8.1
-    sourcerpm: perl-URI-5.09-3.el9_8.1.src.rpm
+    evr: 5.09-4.el9_9
+    sourcerpm: perl-URI-5.09-4.el9_9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/perl-Unicode-Normalize-1.27-461.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-appstream-rpms
     size: 92474
@@ -424,34 +424,34 @@ arches:
     name: groff-base
     evr: 1.22.4-10.el9
     sourcerpm: groff-1.22.4-10.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/h/hwdata-0.348-9.22.el9.noarch.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/h/hwdata-0.348-9.24.el9.noarch.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 1773961
-    checksum: sha256:c037e4b4e6168eff309f75b1c3b96359734f887528d0d9bb4a6b0dc8e7bcc0e2
+    size: 1809165
+    checksum: sha256:c505f93ff15782e605329773a69912d258b7ce5a0865e83876f3ae5d93932881
     name: hwdata
-    evr: 0.348-9.22.el9
-    sourcerpm: hwdata-0.348-9.22.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libibumad-61.0-2.el9.aarch64.rpm
+    evr: 0.348-9.24.el9
+    sourcerpm: hwdata-0.348-9.24.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libibumad-61.0-3.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 34193
-    checksum: sha256:15f4ce0258d24e429e89a9f2f82ae426bd21a80c5dfccb03151b7b6355827ca0
+    size: 34277
+    checksum: sha256:7bd24164c9fc9ac894018358741de575e076ab950f3190274e6aee03b8f988c8
     name: libibumad
-    evr: 61.0-2.el9
-    sourcerpm: rdma-core-61.0-2.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libibverbs-61.0-2.el9.aarch64.rpm
+    evr: 61.0-3.el9
+    sourcerpm: rdma-core-61.0-3.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libibverbs-61.0-3.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 490223
-    checksum: sha256:fefa639490ba2fb332e93fee3db6ed1651fd8c5d138d4b0eb9c6088425198983
+    size: 490511
+    checksum: sha256:705e9de3acd6e081f93963715ba40c4571e348e1b1a02c80d6a31cb3c49c8803
     name: libibverbs
-    evr: 61.0-2.el9
-    sourcerpm: rdma-core-61.0-2.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libibverbs-utils-61.0-2.el9.aarch64.rpm
+    evr: 61.0-3.el9
+    sourcerpm: rdma-core-61.0-3.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libibverbs-utils-61.0-3.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 80093
-    checksum: sha256:8989de076d405409bdf0b3bffcd03dbedcef95a3204c0e4a7c3414dc89a9021f
+    size: 79577
+    checksum: sha256:8d7d8b89d6114eee2ac15dc9055f98aa16391b9751e13a387eb12338011d5151
     name: libibverbs-utils
-    evr: 61.0-2.el9
-    sourcerpm: rdma-core-61.0-2.el9.src.rpm
+    evr: 61.0-3.el9
+    sourcerpm: rdma-core-61.0-3.el9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libnl3-3.11.0-1.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
     size: 363241
@@ -466,31 +466,31 @@ arches:
     name: ncurses
     evr: 6.2-12.20210508.el9
     sourcerpm: ncurses-6.2-12.20210508.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/pciutils-3.7.0-7.el9.aarch64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/pciutils-3.7.0-8.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 95797
-    checksum: sha256:6442e2a06eedbed95bdf4c72c99a2bace611f88b8de85763a531890495d0736c
+    size: 98009
+    checksum: sha256:272d17cc74bb061888897ebc63b598dec4a63bb43f411ffe31e9babdec19ad5f
     name: pciutils
-    evr: 3.7.0-7.el9
-    sourcerpm: pciutils-3.7.0-7.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/pciutils-libs-3.7.0-7.el9.aarch64.rpm
+    evr: 3.7.0-8.el9
+    sourcerpm: pciutils-3.7.0-8.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/pciutils-libs-3.7.0-8.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 41241
-    checksum: sha256:f7fd6fa012a09505c371b7c572e84e23cb253670a954066b0b77b53ec5975602
+    size: 44929
+    checksum: sha256:d509cb38eb16fa438e667eb56962a799f40db1b6cf2e7f16a590c7cfb9ff0c13
     name: pciutils-libs
-    evr: 3.7.0-7.el9
-    sourcerpm: pciutils-3.7.0-7.el9.src.rpm
+    evr: 3.7.0-8.el9
+    sourcerpm: pciutils-3.7.0-8.el9.src.rpm
   source: []
   module_metadata: []
 - arch: x86_64
   packages:
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/i/infiniband-diags-61.0-2.el9.x86_64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/i/infiniband-diags-61.0-3.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-appstream-rpms
-    size: 351055
-    checksum: sha256:53ae5b550f7e94bb30a001fe9dc86203cbd4a5aa2a4393bef9bfa501782d5ae5
+    size: 351020
+    checksum: sha256:aea0df3bd8dc415c0700eb19eb0ea81799c4147e04f026f97d6e2c3a7f8427a8
     name: infiniband-diags
-    evr: 61.0-2.el9
-    sourcerpm: rdma-core-61.0-2.el9.src.rpm
+    evr: 61.0-3.el9
+    sourcerpm: rdma-core-61.0-3.el9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/perl-AutoLoader-5.74-484.el9_8.noarch.rpm
     repoid: ubi-9-for-x86_64-appstream-rpms
     size: 26763
@@ -673,13 +673,13 @@ arches:
     name: perl-NDBM_File
     evr: 1.15-484.el9_8
     sourcerpm: perl-5.32.1-484.el9_8.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/perl-Net-SSLeay-1.94-3.el9.x86_64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/perl-Net-SSLeay-1.94-4.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-appstream-rpms
-    size: 424361
-    checksum: sha256:e786e9bf9a3485be034b5f1ce80f4d1e2fc82502e27ac36a6d1a7681ea0ce261
+    size: 429322
+    checksum: sha256:a9c657df24bed245aa567cfc77283c057edfd9dd20c6843e15725da072b1e4cf
     name: perl-Net-SSLeay
-    evr: 1.94-3.el9
-    sourcerpm: perl-Net-SSLeay-1.94-3.el9.src.rpm
+    evr: 1.94-4.el9
+    sourcerpm: perl-Net-SSLeay-1.94-4.el9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/perl-POSIX-1.94-484.el9_8.x86_64.rpm
     repoid: ubi-9-for-x86_64-appstream-rpms
     size: 103493
@@ -792,13 +792,13 @@ arches:
     name: perl-Time-Local
     evr: 2:1.300-7.el9
     sourcerpm: perl-Time-Local-1.300-7.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/perl-URI-5.09-3.el9_8.1.noarch.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/perl-URI-5.09-4.el9_9.noarch.rpm
     repoid: ubi-9-for-x86_64-appstream-rpms
-    size: 130351
-    checksum: sha256:5dc2921a96c8dac9acbb3b2c36a45cf71c6c9bc81b12b01d08488692f7ff5bad
+    size: 130330
+    checksum: sha256:f2cea1a1b8219ddbca6e853a5c5272daa8070ecbd10657a3ffa843e1e5757239
     name: perl-URI
-    evr: 5.09-3.el9_8.1
-    sourcerpm: perl-URI-5.09-3.el9_8.1.src.rpm
+    evr: 5.09-4.el9_9
+    sourcerpm: perl-URI-5.09-4.el9_9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/perl-Unicode-Normalize-1.27-461.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-appstream-rpms
     size: 96049
@@ -904,34 +904,34 @@ arches:
     name: groff-base
     evr: 1.22.4-10.el9
     sourcerpm: groff-1.22.4-10.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/h/hwdata-0.348-9.22.el9.noarch.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/h/hwdata-0.348-9.24.el9.noarch.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 1773961
-    checksum: sha256:c037e4b4e6168eff309f75b1c3b96359734f887528d0d9bb4a6b0dc8e7bcc0e2
+    size: 1809165
+    checksum: sha256:c505f93ff15782e605329773a69912d258b7ce5a0865e83876f3ae5d93932881
     name: hwdata
-    evr: 0.348-9.22.el9
-    sourcerpm: hwdata-0.348-9.22.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libibumad-61.0-2.el9.x86_64.rpm
+    evr: 0.348-9.24.el9
+    sourcerpm: hwdata-0.348-9.24.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libibumad-61.0-3.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 34828
-    checksum: sha256:342cb5bf3150aa3e138e22e6e915d22aecbd3783cd4a30b676890543ef25583c
+    size: 34827
+    checksum: sha256:db309a677e555a23fee120083a4fbfbfff03a8a2ed44d2509b22321cb32c8c61
     name: libibumad
-    evr: 61.0-2.el9
-    sourcerpm: rdma-core-61.0-2.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libibverbs-61.0-2.el9.x86_64.rpm
+    evr: 61.0-3.el9
+    sourcerpm: rdma-core-61.0-3.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libibverbs-61.0-3.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 498499
-    checksum: sha256:4789955ff27b0339c2b61ad52d492965e0ad7f02cd44b68370ca82d6aa596b41
+    size: 497727
+    checksum: sha256:25a477776f1262464950c17255a7b70d014293ecd0b3d58af042b823de109490
     name: libibverbs
-    evr: 61.0-2.el9
-    sourcerpm: rdma-core-61.0-2.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libibverbs-utils-61.0-2.el9.x86_64.rpm
+    evr: 61.0-3.el9
+    sourcerpm: rdma-core-61.0-3.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libibverbs-utils-61.0-3.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 79662
-    checksum: sha256:9a6469befdda3694853eee9d69bcb8b4ee279a3b07f6b8b7b072d911b5f4d314
+    size: 80285
+    checksum: sha256:660c139f07085157cc9521d94cae33f8b09599102697bb38ccb0f884430e3ed8
     name: libibverbs-utils
-    evr: 61.0-2.el9
-    sourcerpm: rdma-core-61.0-2.el9.src.rpm
+    evr: 61.0-3.el9
+    sourcerpm: rdma-core-61.0-3.el9.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libnl3-3.11.0-1.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
     size: 376137
@@ -946,19 +946,19 @@ arches:
     name: ncurses
     evr: 6.2-12.20210508.el9
     sourcerpm: ncurses-6.2-12.20210508.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/pciutils-3.7.0-7.el9.x86_64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/pciutils-3.7.0-8.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 98775
-    checksum: sha256:f9790ff09822692f432aa59b8e6e69620ec118fa86d99d7b15ef2f0a6569b442
+    size: 101016
+    checksum: sha256:2c1ddcdb8d1914f95888152854fa9a3344277eda394015d2debd93e5b71db442
     name: pciutils
-    evr: 3.7.0-7.el9
-    sourcerpm: pciutils-3.7.0-7.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/pciutils-libs-3.7.0-7.el9.x86_64.rpm
+    evr: 3.7.0-8.el9
+    sourcerpm: pciutils-3.7.0-8.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/pciutils-libs-3.7.0-8.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 43562
-    checksum: sha256:468f1102d03ebda5ff883c34fc6a76a6b72faf9f230fbcec61432631943846b9
+    size: 47374
+    checksum: sha256:3ba7a883e295ed45bd2f4a3a2270b0acf2f245f64eadf0ed78fa5a8fe753656d
     name: pciutils-libs
-    evr: 3.7.0-7.el9
-    sourcerpm: pciutils-3.7.0-7.el9.src.rpm
+    evr: 3.7.0-8.el9
+    sourcerpm: pciutils-3.7.0-8.el9.src.rpm
   source: []
   module_metadata: []
