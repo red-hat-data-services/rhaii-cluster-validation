@@ -144,13 +144,13 @@ arches:
     name: libnl3
     evr: 3.11.0-1.el9
     sourcerpm: libnl3-3.11.0-1.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libpcap-1.10.0-4.el9_8.1.aarch64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libpcap-1.10.0-4.el9_9.2.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 177153
-    checksum: sha256:c656f1ebc5833e01148f6dca75a1a43c89c8dfc78e7cf1fef29fcbedb04dac28
+    size: 177369
+    checksum: sha256:9de6178c65da586254c6dcfe084bccb734005e9815bd2083a191ad3b4999685c
     name: libpcap
-    evr: 14:1.10.0-4.el9_8.1
-    sourcerpm: libpcap-1.10.0-4.el9_8.1.src.rpm
+    evr: 14:1.10.0-4.el9_9.2
+    sourcerpm: libpcap-1.10.0-4.el9_9.2.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libpsl-0.21.1-5.el9.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
     size: 67300
@@ -214,41 +214,41 @@ arches:
     name: publicsuffix-list-dafsa
     evr: 20210518-3.el9
     sourcerpm: publicsuffix-list-20210518-3.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-252-79.el9_9.aarch64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-252-79.el9_9.1.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 4146864
-    checksum: sha256:be3394e595e19b1d5ecfc754c325e534a609fe2ffde4d9be96b453eb5b64e721
+    size: 4147496
+    checksum: sha256:a7dc6e637c8454b0f2ad1184c1ff8c521e7f2f79dfa92fcd881a7c39eba2c577
     name: systemd
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-libs-252-79.el9_9.aarch64.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-libs-252-79.el9_9.1.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 629822
-    checksum: sha256:867fa806604bdf721ad4ee82908a2078ae42e20a32da86de88b47b71430dfe11
+    size: 630510
+    checksum: sha256:885f7c5c0d724b93f5f6e0646135e45de1b7ded1845497061112fe3d8e75adc6
     name: systemd-libs
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-pam-252-79.el9_9.aarch64.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-pam-252-79.el9_9.1.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 248434
-    checksum: sha256:7f54df47624ec7c68c6fdae65c502a2f744d817cbe5111705a8442ed3a4adfb5
+    size: 248855
+    checksum: sha256:72f0c60a89b659a2d674fcc6d82026fa7d2c913cfc26b03a52065bd0e77e6220
     name: systemd-pam
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-rpm-macros-252-79.el9_9.noarch.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-rpm-macros-252-79.el9_9.1.noarch.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 41417
-    checksum: sha256:601a5463e84ace10a8b696beb3816ef8bc7d20afb6fecb539f585b29e97ceabf
+    size: 41813
+    checksum: sha256:07f7baa81b0ba437650f222813b0e8f316914d1b06440fa83b819a8c7e4bef6d
     name: systemd-rpm-macros
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-udev-252-79.el9_9.aarch64.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/systemd-udev-252-79.el9_9.1.aarch64.rpm
     repoid: ubi-9-for-aarch64-baseos-rpms
-    size: 2061396
-    checksum: sha256:babf9fb672d77925760ef8b1911e7a854f7f7e64a8c087ab84b8bcb475d47eda
+    size: 2062604
+    checksum: sha256:e08771fa7ecbc6b14402398aef12b6784a68146d2c65d070ca3b231fdf5b1d70
     name: systemd-udev
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
   source: []
   module_metadata: []
 - arch: x86_64
@@ -386,13 +386,13 @@ arches:
     name: libnl3
     evr: 3.11.0-1.el9
     sourcerpm: libnl3-3.11.0-1.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libpcap-1.10.0-4.el9_8.1.x86_64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libpcap-1.10.0-4.el9_9.2.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 181323
-    checksum: sha256:b60aac59b75ad9a26fb7b8c5fe431c696ea4c9d2803bd1e0b3d3cfc24ca33735
+    size: 181559
+    checksum: sha256:e21322eb35062fb00d27651b3506beec4a10da9cb24564113697671fd0ed2f40
     name: libpcap
-    evr: 14:1.10.0-4.el9_8.1
-    sourcerpm: libpcap-1.10.0-4.el9_8.1.src.rpm
+    evr: 14:1.10.0-4.el9_9.2
+    sourcerpm: libpcap-1.10.0-4.el9_9.2.src.rpm
   - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libpsl-0.21.1-5.el9.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
     size: 67454
@@ -456,40 +456,40 @@ arches:
     name: publicsuffix-list-dafsa
     evr: 20210518-3.el9
     sourcerpm: publicsuffix-list-20210518-3.el9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-252-79.el9_9.x86_64.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-252-79.el9_9.1.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 4397590
-    checksum: sha256:8d349cdb8899fb709b01d968fd849cf24cd3dd8c7935a11fba13a541d229b62a
+    size: 4396903
+    checksum: sha256:38f36d12bf8ff4a0b75d503913742efc4630dff2ef96dc09e29dd89d4fd557b3
     name: systemd
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-libs-252-79.el9_9.x86_64.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-libs-252-79.el9_9.1.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 664875
-    checksum: sha256:a4508c389f333e635860a5d22690d6ace8b5f9a8ded065009b4a13f8f9f629d6
+    size: 663424
+    checksum: sha256:f10bd3bbb1280cef3830d0b341e12a61de15e2a8d53444e3d19af714f631ccfe
     name: systemd-libs
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-pam-252-79.el9_9.x86_64.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-pam-252-79.el9_9.1.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 258820
-    checksum: sha256:84a210955d395b190d1082d7b3259d54dc0998fcf38cc80433bb7c8ea2ca3f2e
+    size: 259347
+    checksum: sha256:3a7ae96e4a9445b824a104f0ba7c8f74e681774b110f698964c8351c24d27977
     name: systemd-pam
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-rpm-macros-252-79.el9_9.noarch.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-rpm-macros-252-79.el9_9.1.noarch.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 41417
-    checksum: sha256:601a5463e84ace10a8b696beb3816ef8bc7d20afb6fecb539f585b29e97ceabf
+    size: 41813
+    checksum: sha256:07f7baa81b0ba437650f222813b0e8f316914d1b06440fa83b819a8c7e4bef6d
     name: systemd-rpm-macros
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
-  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-udev-252-79.el9_9.x86_64.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/systemd-udev-252-79.el9_9.1.x86_64.rpm
     repoid: ubi-9-for-x86_64-baseos-rpms
-    size: 2111914
-    checksum: sha256:1b4bafd0602cfa0e8f1d7d8a520de998ad64092deb81979acf86caf2b05d3cab
+    size: 2112011
+    checksum: sha256:c20710100549a3e8e27a2cab29a83c79dea04f172283c5b049caf36ece6bafc4
     name: systemd-udev
-    evr: 252-79.el9_9
-    sourcerpm: systemd-252-79.el9_9.src.rpm
+    evr: 252-79.el9_9.1
+    sourcerpm: systemd-252-79.el9_9.1.src.rpm
   source: []
   module_metadata: []
